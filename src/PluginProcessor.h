@@ -61,6 +61,10 @@ private:
     std::vector<float> wetRightBuffer_;
     std::array<std::vector<float>, kMaxVoices> voiceRenderStorage_;
     std::array<float*, kMaxVoices> voiceRenderPtrs_{};
+    int allocatedBlockSize_ = 0;
+
+    // Smoothed dry/wet parameter to prevent zipper noise
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedDryWet_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HarmonizerProcessor)
 };

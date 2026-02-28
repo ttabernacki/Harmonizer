@@ -1,6 +1,8 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 #include <cstring>
+#include <cmath>
+#include <algorithm>
 
 HarmonizerProcessor::HarmonizerProcessor()
     : AudioProcessor(BusesProperties()
@@ -46,6 +48,7 @@ void HarmonizerProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     panningEngine_.prepare(sampleRate, samplesPerBlock);
 
     // Pre-allocate all buffers used in processBlock
+    allocatedBlockSize_ = samplesPerBlock;
     monoBuffer_.resize(static_cast<size_t>(samplesPerBlock), 0.0f);
     wetLeftBuffer_.resize(static_cast<size_t>(samplesPerBlock), 0.0f);
     wetRightBuffer_.resize(static_cast<size_t>(samplesPerBlock), 0.0f);
@@ -55,6 +58,10 @@ void HarmonizerProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         voiceRenderStorage_[static_cast<size_t>(i)].resize(static_cast<size_t>(samplesPerBlock), 0.0f);
         voiceRenderPtrs_[static_cast<size_t>(i)] = voiceRenderStorage_[static_cast<size_t>(i)].data();
     }
+
+    // Dry/wet smoother: ~20ms ramp time to eliminate zipper noise
+    smoothedDryWet_.reset(sampleRate, 0.02);
+    smoothedDryWet_.setCurrentAndTargetValue(apvts_.getRawParameterValue("dryWet")->load());
 }
 
 void HarmonizerProcessor::releaseResources()
@@ -72,6 +79,10 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     if (numSamples == 0)
         return;
 
+    // Guard: clamp to allocated size to prevent buffer overflows if host
+    // sends a block larger than what was specified in prepareToPlay.
+    numSamples = std::min(numSamples, allocatedBlockSize_);
+
     // Step 1: Process MIDI
     midiTracker_.processMidiBuffer(midiMessages);
     midiActivity.store(midiTracker_.hasActivity());
@@ -88,10 +99,11 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     int numActiveNotes = 0;
     const int* activeNotes = midiTracker_.getActiveNotes(numActiveNotes);
     voicePool_.updateNotes(activeNotes, numActiveNotes, pitch);
-    activeVoiceCount.store(voicePool_.getActiveVoiceCount());
+
+    int activeCount = voicePool_.getActiveVoiceCount();
+    activeVoiceCount.store(activeCount);
 
     // Step 5: Render each voice individually (for per-voice panning)
-    // Update pointers in case resize moved the data (only happens on first call after prepare)
     for (int i = 0; i < kMaxVoices; ++i)
         voiceRenderPtrs_[static_cast<size_t>(i)] = voiceRenderStorage_[static_cast<size_t>(i)].data();
 
@@ -101,38 +113,40 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     const auto& voices = voicePool_.getVoices();
     panningEngine_.updatePanning(voices);
 
-    // Step 7: Get dry/wet mix parameter
-    float dryWetMix = apvts_.getRawParameterValue("dryWet")->load();
+    // Step 7: Smoothed dry/wet parameter (prevents zipper noise on knob movement)
+    smoothedDryWet_.setTargetValue(apvts_.getRawParameterValue("dryWet")->load());
 
     // Step 8: Build stereo output
     float* leftOut  = buffer.getWritePointer(0);
     float* rightOut = (numOutputChannels >= 2) ? buffer.getWritePointer(1) : nullptr;
 
-    // Start with dry signal (centered) scaled by (1 - mix)
-    float dryGain = 1.0f - dryWetMix;
-    for (int i = 0; i < numSamples; ++i)
-    {
-        leftOut[i] = monoBuffer_[static_cast<size_t>(i)] * dryGain;
-    }
-    if (rightOut != nullptr)
-        std::memcpy(rightOut, leftOut, static_cast<size_t>(numSamples) * sizeof(float));
-
-    // Apply per-voice panning for wet signal using pre-allocated buffers
+    // Apply per-voice panning into wet buffers
     std::memset(wetLeftBuffer_.data(), 0, static_cast<size_t>(numSamples) * sizeof(float));
     std::memset(wetRightBuffer_.data(), 0, static_cast<size_t>(numSamples) * sizeof(float));
 
     panningEngine_.applyPanning(voiceRenderPtrs_.data(), voices,
                                  wetLeftBuffer_.data(), wetRightBuffer_.data(), numSamples);
 
-    float wetGain = dryWetMix;
+    // Gain compensation: attenuate wet signal when multiple voices are active to prevent
+    // clipping. Scale by 1/sqrt(N) for N active voices (constant-power summation).
+    float voiceGain = 1.0f;
+    if (activeCount > 1)
+        voiceGain = 1.0f / std::sqrt(static_cast<float>(activeCount));
+
+    // Mix dry + wet per-sample with smoothed parameter
     for (int i = 0; i < numSamples; ++i)
     {
-        leftOut[i] += wetLeftBuffer_[static_cast<size_t>(i)] * wetGain;
-    }
-    if (rightOut != nullptr)
-    {
-        for (int i = 0; i < numSamples; ++i)
-            rightOut[i] += wetRightBuffer_[static_cast<size_t>(i)] * wetGain;
+        float mix = smoothedDryWet_.getNextValue();
+        float dryGain = 1.0f - mix;
+        float wetGain = mix * voiceGain;
+
+        float dry = monoBuffer_[static_cast<size_t>(i)];
+        float wetL = wetLeftBuffer_[static_cast<size_t>(i)];
+        float wetR = wetRightBuffer_[static_cast<size_t>(i)];
+
+        leftOut[i] = dry * dryGain + wetL * wetGain;
+        if (rightOut != nullptr)
+            rightOut[i] = dry * dryGain + wetR * wetGain;
     }
 
     // Clear MIDI buffer so downstream plugins don't re-process

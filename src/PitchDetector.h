@@ -27,6 +27,7 @@ private:
     std::vector<float> yinBuffer_;
 
     static constexpr float yinThreshold_ = 0.15f;
-    static constexpr float minFrequency_ = 60.0f;   // Hz — lowest pitch to detect
-    static constexpr float maxFrequency_ = 1500.0f;  // Hz — highest pitch to detect
+    static constexpr float minFrequency_ = 60.0f;    // Hz — lowest pitch to detect
+    static constexpr float maxFrequency_ = 1500.0f;   // Hz — highest pitch to detect
+    static constexpr float silenceThresholdRms_ = 0.01f;  // ~-40 dB RMS noise gate
 };

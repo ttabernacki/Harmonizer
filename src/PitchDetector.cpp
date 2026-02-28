@@ -41,6 +41,15 @@ float PitchDetector::detectPitch(const float* audioBuffer, int numSamples)
 
 float PitchDetector::yinDetect(const float* buffer, int numSamples)
 {
+    // RMS silence gate: return -1 if signal is below noise floor.
+    // Prevents spurious pitch detection on background noise.
+    float sumSquares = 0.0f;
+    for (int i = 0; i < numSamples; ++i)
+        sumSquares += buffer[i] * buffer[i];
+    float rms = std::sqrt(sumSquares / static_cast<float>(numSamples));
+    if (rms < silenceThresholdRms_)
+        return -1.0f;
+
     const int halfN = numSamples / 2;
 
     // Step 1 & 2: Difference function and cumulative mean normalized difference
