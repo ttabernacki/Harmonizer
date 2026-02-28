@@ -1,11 +1,10 @@
 #include "PanningEngine.h"
 #include <algorithm>
-#include <vector>
 #include <cstring>
 
 void PanningEngine::prepare(double sampleRate, int /*maxBlockSize*/)
 {
-    float smoothSamples = static_cast<float>(sampleRate) * PAN_SMOOTH_TIME_MS / 1000.0f;
+    float smoothSamples = static_cast<float>(sampleRate) * kPanSmoothTimeMs / 1000.0f;
     panSmoothCoeff_ = 1.0f - std::exp(-1.0f / smoothSamples);
 
     for (auto& ps : panStates_)
@@ -15,33 +14,30 @@ void PanningEngine::prepare(double sampleRate, int /*maxBlockSize*/)
     }
 }
 
-void PanningEngine::updatePanning(const std::array<HarmonyVoice, MAX_PAN_VOICES>& voices)
+void PanningEngine::updatePanning(const std::array<HarmonyVoice, kMaxVoices>& voices)
 {
-    // Collect active voice indices sorted by MIDI note
-    struct VoiceInfo { int index; int note; };
-    std::vector<VoiceInfo> activeVoices;
-
-    for (int i = 0; i < MAX_PAN_VOICES; ++i)
+    // Collect active voice indices into pre-allocated buffer (no heap allocation)
+    int count = 0;
+    for (int i = 0; i < kMaxVoices; ++i)
     {
         if (voices[static_cast<size_t>(i)].isActive())
         {
-            activeVoices.push_back({ i, voices[static_cast<size_t>(i)].getAssignedNote() });
+            sortBuffer_[static_cast<size_t>(count)] = { i, voices[static_cast<size_t>(i)].getAssignedNote() };
+            ++count;
         }
     }
-
-    // Sort by MIDI note (low to high)
-    std::sort(activeVoices.begin(), activeVoices.end(),
-              [](const VoiceInfo& a, const VoiceInfo& b) { return a.note < b.note; });
-
-    int count = static_cast<int>(activeVoices.size());
 
     if (count == 0)
         return;
 
+    // Sort by MIDI note (low to high)
+    std::sort(sortBuffer_.begin(), sortBuffer_.begin() + count,
+              [](const VoiceInfo& a, const VoiceInfo& b) { return a.note < b.note; });
+
     if (count == 1)
     {
-        // Single voice → center
-        panStates_[static_cast<size_t>(activeVoices[0].index)].targetPan = 0.0f;
+        // Single voice -> center
+        panStates_[static_cast<size_t>(sortBuffer_[0].index)].targetPan = 0.0f;
     }
     else
     {
@@ -49,16 +45,16 @@ void PanningEngine::updatePanning(const std::array<HarmonyVoice, MAX_PAN_VOICES>
         for (int i = 0; i < count; ++i)
         {
             float pan = -0.8f + 1.6f * static_cast<float>(i) / static_cast<float>(count - 1);
-            panStates_[static_cast<size_t>(activeVoices[i].index)].targetPan = pan;
+            panStates_[static_cast<size_t>(sortBuffer_[static_cast<size_t>(i)].index)].targetPan = pan;
         }
     }
 }
 
 void PanningEngine::applyPanning(const float* const* voiceBuffers,
-                                  const std::array<HarmonyVoice, MAX_PAN_VOICES>& voices,
+                                  const std::array<HarmonyVoice, kMaxVoices>& voices,
                                   float* leftOut, float* rightOut, int numSamples)
 {
-    for (int v = 0; v < MAX_PAN_VOICES; ++v)
+    for (int v = 0; v < kMaxVoices; ++v)
     {
         if (!voices[static_cast<size_t>(v)].isActive())
             continue;

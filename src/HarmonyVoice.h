@@ -1,12 +1,9 @@
 #pragma once
 
+#include "Constants.h"
 #include <rubberband/RubberBandStretcher.h>
 #include <memory>
 #include <vector>
-
-// Compile-time constants for tuning
-static constexpr float PITCH_SMOOTH_TIME_MS = 100.0f;  // Pitch interpolation time (50–150ms range)
-static constexpr float FADE_OUT_TIME_MS     = 10.0f;   // Click-free deactivation fade
 
 class HarmonyVoice
 {
@@ -59,5 +56,7 @@ private:
 
     // Buffers for RubberBand I/O
     std::vector<float> stretcherOutput_;
+    std::vector<float> startPadBuffer_;  // Pre-allocated to avoid heap alloc in activate()
     bool prepared_ = false;
+    bool waitingForPitch_ = false;       // True when activated before pitch detection has locked on
 };

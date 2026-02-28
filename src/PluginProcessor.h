@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include "Constants.h"
 #include "PitchDetector.h"
 #include "MidiNoteTracker.h"
 #include "VoicePool.h"
@@ -16,7 +17,9 @@ public:
 
     void prepareToPlay(double sampleRate, int samplesPerBlock) override;
     void releaseResources() override;
+    bool isBusesLayoutSupported(const BusesLayout& layouts) const override;
     void processBlock(juce::AudioBuffer<float>&, juce::MidiBuffer&) override;
+    using AudioProcessor::processBlock;  // Suppress -Woverloaded-virtual for double variant
 
     juce::AudioProcessorEditor* createEditor() override;
     bool hasEditor() const override { return true; }
@@ -52,10 +55,12 @@ private:
     VoicePool voicePool_;
     PanningEngine panningEngine_;
 
+    // Pre-allocated buffers (sized in prepareToPlay, no allocation in processBlock)
     std::vector<float> monoBuffer_;
-    std::vector<float> wetBuffer_;
-    std::vector<float*> voiceRenderBuffers_;
-    std::vector<std::vector<float>> voiceRenderStorage_;
+    std::vector<float> wetLeftBuffer_;
+    std::vector<float> wetRightBuffer_;
+    std::array<std::vector<float>, kMaxVoices> voiceRenderStorage_;
+    std::array<float*, kMaxVoices> voiceRenderPtrs_{};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HarmonizerProcessor)
 };

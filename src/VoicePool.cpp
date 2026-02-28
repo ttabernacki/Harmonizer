@@ -7,23 +7,29 @@ VoicePool::VoicePool() = default;
 void VoicePool::prepare(double sampleRate, int maxBlockSize)
 {
     maxBlockSize_ = maxBlockSize;
-    voiceBuffer_.resize(static_cast<size_t>(maxBlockSize), 0.0f);
 
     for (auto& voice : voices_)
         voice.prepare(sampleRate, maxBlockSize);
 }
 
-void VoicePool::updateNotes(const std::set<int>& activeNotes, float detectedPitchHz)
+void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float detectedPitchHz)
 {
     // Step 1: Deactivate voices whose notes are no longer held
     for (auto& voice : voices_)
     {
         if (voice.isActive() && !voice.isFadingOut())
         {
-            if (activeNotes.find(voice.getAssignedNote()) == activeNotes.end())
+            bool stillHeld = false;
+            for (int i = 0; i < numActiveNotes; ++i)
             {
-                voice.deactivate();
+                if (activeNotes[i] == voice.getAssignedNote())
+                {
+                    stillHeld = true;
+                    break;
+                }
             }
+            if (!stillHeld)
+                voice.deactivate();
         }
     }
 
@@ -31,14 +37,14 @@ void VoicePool::updateNotes(const std::set<int>& activeNotes, float detectedPitc
     for (auto& voice : voices_)
     {
         if (voice.isActive())
-        {
             voice.updateInputPitch(detectedPitchHz);
-        }
     }
 
     // Step 3: Activate new voices for notes that don't have a voice yet
-    for (int note : activeNotes)
+    for (int n = 0; n < numActiveNotes; ++n)
     {
+        int note = activeNotes[n];
+
         // Check if this note already has a voice
         bool found = false;
         for (const auto& voice : voices_)
@@ -52,7 +58,7 @@ void VoicePool::updateNotes(const std::set<int>& activeNotes, float detectedPitc
 
         if (!found)
         {
-            // Find a free voice (not active, or done fading)
+            // Find a free voice
             for (auto& voice : voices_)
             {
                 if (!voice.isActive())
@@ -66,19 +72,17 @@ void VoicePool::updateNotes(const std::set<int>& activeNotes, float detectedPitc
     }
 }
 
-void VoicePool::processBlock(const float* input, float* wetOutput, int numSamples)
+void VoicePool::renderVoices(const float* input, float* voiceOutputs[], int numSamples)
 {
-    std::memset(wetOutput, 0, static_cast<size_t>(numSamples) * sizeof(float));
-
-    for (auto& voice : voices_)
+    for (int v = 0; v < kMaxVoices; ++v)
     {
-        if (voice.isActive())
+        if (voices_[static_cast<size_t>(v)].isActive())
         {
-            voice.process(input, voiceBuffer_.data(), numSamples);
-
-            // Sum into wet output
-            for (int i = 0; i < numSamples; ++i)
-                wetOutput[i] += voiceBuffer_[static_cast<size_t>(i)];
+            voices_[static_cast<size_t>(v)].process(input, voiceOutputs[v], numSamples);
+        }
+        else
+        {
+            std::memset(voiceOutputs[v], 0, static_cast<size_t>(numSamples) * sizeof(float));
         }
     }
 }

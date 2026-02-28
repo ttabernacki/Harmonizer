@@ -1,11 +1,11 @@
 #pragma once
 
 #include "HarmonyVoice.h"
+#include "Constants.h"
 #include <array>
-#include <set>
 #include <vector>
 
-static constexpr int MAX_VOICES = 12;
+class MidiNoteTracker;  // Forward declare to avoid circular include
 
 class VoicePool
 {
@@ -16,19 +16,20 @@ public:
 
     // Update voice allocation based on currently held MIDI notes and detected pitch.
     // Uses first-held priority: if >12 notes are held, excess notes are ignored.
-    void updateNotes(const std::set<int>& activeNotes, float detectedPitchHz);
+    void updateNotes(const int* activeNotes, int numActiveNotes, float detectedPitchHz);
 
-    // Render all active voices into the wet output buffer (mono, summed).
-    void processBlock(const float* input, float* wetOutput, int numSamples);
+    // Render each active voice individually into the per-voice output buffers.
+    // voiceOutputs[i] must point to a buffer of at least numSamples floats.
+    // Inactive voices get zeroed.
+    void renderVoices(const float* input, float* voiceOutputs[], int numSamples);
 
     // Returns the number of currently active (non-fading) voices.
     int getActiveVoiceCount() const;
 
-    // Access the voice array (for PanningEngine).
-    const std::array<HarmonyVoice, MAX_VOICES>& getVoices() const { return voices_; }
+    // Access the voice array (read-only, for PanningEngine).
+    const std::array<HarmonyVoice, kMaxVoices>& getVoices() const { return voices_; }
 
 private:
-    std::array<HarmonyVoice, MAX_VOICES> voices_;
-    std::vector<float> voiceBuffer_;  // Temp buffer for individual voice output
+    std::array<HarmonyVoice, kMaxVoices> voices_;
     int maxBlockSize_ = 512;
 };

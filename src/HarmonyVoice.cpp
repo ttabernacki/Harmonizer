@@ -16,12 +16,12 @@ void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
     sampleRate_ = sampleRate;
     maxBlockSize_ = maxBlockSize;
 
-    // Calculate smoothing coefficient: exponential decay over PITCH_SMOOTH_TIME_MS
-    float smoothSamples = static_cast<float>(sampleRate) * PITCH_SMOOTH_TIME_MS / 1000.0f;
+    // Calculate per-sample smoothing coefficient for exponential decay over kPitchSmoothTimeMs
+    float smoothSamples = static_cast<float>(sampleRate) * kPitchSmoothTimeMs / 1000.0f;
     pitchSmoothCoeff_ = 1.0f - std::exp(-1.0f / smoothSamples);
 
-    // Fade-out increment: full fade over FADE_OUT_TIME_MS
-    float fadeSamples = static_cast<float>(sampleRate) * FADE_OUT_TIME_MS / 1000.0f;
+    // Fade-out increment: full fade over kFadeOutTimeMs
+    float fadeSamples = static_cast<float>(sampleRate) * kFadeOutTimeMs / 1000.0f;
     fadeIncrement_ = 1.0f / fadeSamples;
 
     // Create RubberBand stretcher: real-time, R3 (Finer) engine, pitch consistency, formant preservation
@@ -44,6 +44,10 @@ void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
 
     stretcherOutput_.resize(static_cast<size_t>(maxBlockSize * 2), 0.0f);
 
+    // Pre-allocate start padding buffer (avoid heap alloc in activate)
+    size_t pad = stretcher_->getPreferredStartPad();
+    startPadBuffer_.assign(pad, 0.0f);
+
     active_ = false;
     fadingOut_ = false;
     assignedNote_ = -1;
@@ -60,27 +64,38 @@ void HarmonyVoice::activate(int midiNote, float inputPitchHz)
     assignedNote_ = midiNote;
     targetPitchHz_ = midiNoteToFrequency(midiNote);
     inputPitchHz_ = inputPitchHz;
-    active_ = true;
     fadingOut_ = false;
     fadeGain_ = 1.0f;
 
     updatePitchRatio();
 
-    // Snap immediately (no smoothing on activation)
-    currentPitchRatio_ = targetPitchRatio_;
+    // If no pitch detected yet, mute until we get a valid pitch to avoid unshifted leakage
+    if (inputPitchHz <= 0.0f)
+    {
+        currentPitchRatio_ = 1.0f;
+        waitingForPitch_ = true;
+    }
+    else
+    {
+        currentPitchRatio_ = targetPitchRatio_;
+        waitingForPitch_ = false;
+    }
+
     stretcher_->setPitchScale(static_cast<double>(currentPitchRatio_));
 
     // Reset the stretcher for a clean start
     stretcher_->reset();
 
-    // Provide start padding
-    size_t pad = stretcher_->getPreferredStartPad();
-    if (pad > 0)
+    // Provide start padding using pre-allocated buffer (no heap allocation)
+    if (!startPadBuffer_.empty())
     {
-        std::vector<float> silence(pad, 0.0f);
-        const float* silencePtr = silence.data();
-        stretcher_->process(&silencePtr, pad, false);
+        // Ensure pad buffer is zeroed
+        std::memset(startPadBuffer_.data(), 0, startPadBuffer_.size() * sizeof(float));
+        const float* padPtr = startPadBuffer_.data();
+        stretcher_->process(&padPtr, startPadBuffer_.size(), false);
     }
+
+    active_ = true;
 }
 
 void HarmonyVoice::deactivate()
@@ -95,6 +110,13 @@ void HarmonyVoice::updateInputPitch(float inputPitchHz)
     {
         inputPitchHz_ = inputPitchHz;
         updatePitchRatio();
+
+        // If we were waiting for a valid pitch, snap to it immediately
+        if (waitingForPitch_)
+        {
+            currentPitchRatio_ = targetPitchRatio_;
+            waitingForPitch_ = false;
+        }
     }
 }
 
@@ -117,12 +139,28 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples)
         return;
     }
 
-    // Smooth the pitch ratio toward target (per-block approximation)
-    for (int i = 0; i < 4; ++i)  // A few smoothing steps per block
+    // If waiting for pitch detection, output silence (don't feed unshifted audio)
+    if (waitingForPitch_)
     {
-        currentPitchRatio_ += pitchSmoothCoeff_ * (targetPitchRatio_ - currentPitchRatio_)
-                              * static_cast<float>(numSamples) / 4.0f;
+        std::memset(output, 0, static_cast<size_t>(numSamples) * sizeof(float));
+        // Still feed input to keep stretcher primed
+        const float* inputPtr = input;
+        stretcher_->process(&inputPtr, static_cast<size_t>(numSamples), false);
+        // Discard output
+        int avail = stretcher_->available();
+        if (avail > 0)
+        {
+            size_t toDrain = std::min(static_cast<size_t>(avail), stretcherOutput_.size());
+            float* drainPtr = stretcherOutput_.data();
+            stretcher_->retrieve(&drainPtr, toDrain);
+        }
+        return;
     }
+
+    // Smooth the pitch ratio toward target using correct per-sample exponential filter
+    // Compute per-block coefficient: 1 - (1 - perSampleCoeff)^numSamples
+    float blockCoeff = 1.0f - std::pow(1.0f - pitchSmoothCoeff_, static_cast<float>(numSamples));
+    currentPitchRatio_ += blockCoeff * (targetPitchRatio_ - currentPitchRatio_);
     stretcher_->setPitchScale(static_cast<double>(currentPitchRatio_));
 
     // Feed input to RubberBand
@@ -139,10 +177,7 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples)
 
     size_t toRetrieve = std::min(static_cast<size_t>(avail), static_cast<size_t>(numSamples));
 
-    // Ensure output buffer is large enough
-    if (stretcherOutput_.size() < toRetrieve)
-        stretcherOutput_.resize(toRetrieve);
-
+    // stretcherOutput_ is pre-allocated in prepare() to maxBlockSize*2 — no resize needed
     float* outPtr = stretcherOutput_.data();
     stretcher_->retrieve(&outPtr, toRetrieve);
 
@@ -166,8 +201,11 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples)
                 fadingOut_ = false;
                 assignedNote_ = -1;
                 // Zero remaining output
-                std::memset(output + i + 1, 0,
-                            (static_cast<size_t>(numSamples) - i - 1) * sizeof(float));
+                if (i + 1 < static_cast<size_t>(numSamples))
+                {
+                    std::memset(output + i + 1, 0,
+                                (static_cast<size_t>(numSamples) - i - 1) * sizeof(float));
+                }
                 break;
             }
         }
