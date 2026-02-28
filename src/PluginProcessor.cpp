@@ -66,6 +66,10 @@ void HarmonizerProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Gain compensation smoother: ~30ms ramp to avoid volume jumps on voice count changes
     smoothedVoiceGain_.reset(sampleRate, 0.03);
     smoothedVoiceGain_.setCurrentAndTargetValue(1.0f);
+
+    // Report RubberBand's internal processing delay to the host so the DAW
+    // can time-align the dry signal with the pitch-shifted wet harmonies.
+    setLatencySamples(voicePool_.getStartDelay());
 }
 
 void HarmonizerProcessor::releaseResources()

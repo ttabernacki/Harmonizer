@@ -8,8 +8,10 @@ void PitchDetector::prepare(double sampleRate, int /*maxBlockSize*/)
 {
     sampleRate_ = sampleRate;
 
-    // Use 2048 samples for YIN analysis (~46ms at 44.1kHz)
-    bufferSize_ = 2048;
+    // Use 1536 samples for YIN analysis (~35ms at 44.1kHz).
+    // Minimum safe size: 2 * (sampleRate / minFrequency).
+    // At 44.1kHz/60Hz that's 1470, so 1536 gives headroom while cutting ~11ms vs 2048.
+    bufferSize_ = 1536;
     halfBufferSize_ = bufferSize_ / 2;
     hopSize_ = bufferSize_ / 2;  // 50% overlap: detect twice as often
 

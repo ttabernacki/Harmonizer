@@ -30,6 +30,9 @@ public:
     bool isFadingOut() const { return fadingOut_; }
     int getAssignedNote() const { return assignedNote_; }
 
+    // Returns RubberBand's internal processing delay in samples (for host latency reporting).
+    int getStartDelay() const;
+
     // Convert MIDI note number to frequency in Hz (O(1) table lookup).
     static float midiNoteToFrequency(int noteNumber);
 

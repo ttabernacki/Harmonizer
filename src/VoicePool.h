@@ -29,6 +29,9 @@ public:
     // Access the voice array (read-only, for PanningEngine).
     const std::array<HarmonyVoice, kMaxVoices>& getVoices() const { return voices_; }
 
+    // Returns the RubberBand start delay from the first voice (all voices share the same config).
+    int getStartDelay() const { return voices_[0].getStartDelay(); }
+
 private:
     std::array<HarmonyVoice, kMaxVoices> voices_;
     int maxBlockSize_ = 512;

@@ -6,6 +6,13 @@
 HarmonyVoice::HarmonyVoice() = default;
 HarmonyVoice::~HarmonyVoice() = default;
 
+int HarmonyVoice::getStartDelay() const
+{
+    if (stretcher_)
+        return static_cast<int>(stretcher_->getStartDelay());
+    return 0;
+}
+
 const std::array<float, 128>& HarmonyVoice::getMidiFreqTable()
 {
     static const auto table = []()
