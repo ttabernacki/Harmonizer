@@ -43,6 +43,7 @@ public:
     std::atomic<float> detectedPitchHz{ -1.0f };
     std::atomic<int>   activeVoiceCount{ 0 };
     std::atomic<bool>  midiActivity{ false };
+    std::atomic<float> inputLevelDb{ -100.0f };
 
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts_; }
 
@@ -65,6 +66,9 @@ private:
 
     // Smoothed dry/wet parameter to prevent zipper noise
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedDryWet_;
+
+    // Smoothed gain compensation to avoid volume jumps when voice count changes
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedVoiceGain_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HarmonizerProcessor)
 };

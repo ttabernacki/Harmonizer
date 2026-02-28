@@ -39,5 +39,14 @@ private:
     bool midiLedOn_ = false;
     int midiLedCountdown_ = 0;
 
+    // Input level meter state
+    float displayedLevelDb_ = -100.0f;
+
+    // Cached display values for conditional repaint
+    juce::String lastPitchText_;
+    juce::String lastVoicesText_;
+    bool lastMidiLedState_ = false;
+    float lastLevelDb_ = -100.0f;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HarmonizerEditor)
 };

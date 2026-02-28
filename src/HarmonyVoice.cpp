@@ -6,8 +6,22 @@
 HarmonyVoice::HarmonyVoice() = default;
 HarmonyVoice::~HarmonyVoice() = default;
 
+const std::array<float, 128>& HarmonyVoice::getMidiFreqTable()
+{
+    static const auto table = []()
+    {
+        std::array<float, 128> t{};
+        for (int i = 0; i < 128; ++i)
+            t[static_cast<size_t>(i)] = 440.0f * std::pow(2.0f, (static_cast<float>(i) - 69.0f) / 12.0f);
+        return t;
+    }();
+    return table;
+}
+
 float HarmonyVoice::midiNoteToFrequency(int noteNumber)
 {
+    if (noteNumber >= 0 && noteNumber < 128)
+        return getMidiFreqTable()[static_cast<size_t>(noteNumber)];
     return 440.0f * std::pow(2.0f, (static_cast<float>(noteNumber) - 69.0f) / 12.0f);
 }
 
@@ -135,7 +149,8 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples)
 {
     if (!active_ || !prepared_ || numSamples <= 0)
     {
-        std::memset(output, 0, static_cast<size_t>(numSamples) * sizeof(float));
+        if (numSamples > 0)
+            std::memset(output, 0, static_cast<size_t>(numSamples) * sizeof(float));
         return;
     }
 

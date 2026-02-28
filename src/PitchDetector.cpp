@@ -11,9 +11,11 @@ void PitchDetector::prepare(double sampleRate, int /*maxBlockSize*/)
     // Use 2048 samples for YIN analysis (~46ms at 44.1kHz)
     bufferSize_ = 2048;
     halfBufferSize_ = bufferSize_ / 2;
+    hopSize_ = bufferSize_ / 2;  // 50% overlap: detect twice as often
 
     internalBuffer_.resize(static_cast<size_t>(bufferSize_), 0.0f);
     internalBufferWritePos_ = 0;
+    bufferFilled_ = false;
 
     yinBuffer_.resize(static_cast<size_t>(halfBufferSize_), 0.0f);
 
@@ -30,9 +32,15 @@ float PitchDetector::detectPitch(const float* audioBuffer, int numSamples)
 
         if (internalBufferWritePos_ >= bufferSize_)
         {
+            bufferFilled_ = true;
             // Buffer full — run YIN detection
             lastDetectedPitch_ = yinDetect(internalBuffer_.data(), bufferSize_);
-            internalBufferWritePos_ = 0;
+
+            // Shift by hopSize (50% overlap): move second half to first half
+            std::copy(internalBuffer_.begin() + hopSize_,
+                      internalBuffer_.begin() + bufferSize_,
+                      internalBuffer_.begin());
+            internalBufferWritePos_ = bufferSize_ - hopSize_;
         }
     }
 

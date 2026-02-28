@@ -18,10 +18,12 @@ private:
     double sampleRate_ = 44100.0;
     int bufferSize_ = 2048;
     int halfBufferSize_ = 1024;
+    int hopSize_ = 1024;  // 50% overlap for faster pitch updates
 
     std::vector<float> internalBuffer_;
     int internalBufferWritePos_ = 0;
     float lastDetectedPitch_ = -1.0f;
+    bool bufferFilled_ = false;  // True once we've filled at least one full buffer
 
     // YIN working buffers
     std::vector<float> yinBuffer_;

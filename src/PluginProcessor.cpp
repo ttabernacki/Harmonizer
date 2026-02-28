@@ -62,6 +62,10 @@ void HarmonizerProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     // Dry/wet smoother: ~20ms ramp time to eliminate zipper noise
     smoothedDryWet_.reset(sampleRate, 0.02);
     smoothedDryWet_.setCurrentAndTargetValue(apvts_.getRawParameterValue("dryWet")->load());
+
+    // Gain compensation smoother: ~30ms ramp to avoid volume jumps on voice count changes
+    smoothedVoiceGain_.reset(sampleRate, 0.03);
+    smoothedVoiceGain_.setCurrentAndTargetValue(1.0f);
 }
 
 void HarmonizerProcessor::releaseResources()
@@ -90,6 +94,17 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // Step 2: Copy mono input
     const float* inputData = buffer.getReadPointer(0);
     std::memcpy(monoBuffer_.data(), inputData, static_cast<size_t>(numSamples) * sizeof(float));
+
+    // Compute input level (peak) for UI meter
+    float peak = 0.0f;
+    for (int i = 0; i < numSamples; ++i)
+    {
+        float absVal = std::abs(monoBuffer_[static_cast<size_t>(i)]);
+        if (absVal > peak)
+            peak = absVal;
+    }
+    float levelDb = (peak > 0.0f) ? 20.0f * std::log10(peak) : -100.0f;
+    inputLevelDb.store(levelDb);
 
     // Step 3: Detect pitch
     float pitch = pitchDetector_.detectPitch(monoBuffer_.data(), numSamples);
@@ -129,14 +144,17 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
 
     // Gain compensation: attenuate wet signal when multiple voices are active to prevent
     // clipping. Scale by 1/sqrt(N) for N active voices (constant-power summation).
-    float voiceGain = 1.0f;
+    // Smoothed to avoid volume jumps when voice count changes abruptly.
+    float targetVoiceGain = 1.0f;
     if (activeCount > 1)
-        voiceGain = 1.0f / std::sqrt(static_cast<float>(activeCount));
+        targetVoiceGain = 1.0f / std::sqrt(static_cast<float>(activeCount));
+    smoothedVoiceGain_.setTargetValue(targetVoiceGain);
 
-    // Mix dry + wet per-sample with smoothed parameter
+    // Mix dry + wet per-sample with smoothed parameters
     for (int i = 0; i < numSamples; ++i)
     {
         float mix = smoothedDryWet_.getNextValue();
+        float voiceGain = smoothedVoiceGain_.getNextValue();
         float dryGain = 1.0f - mix;
         float wetGain = mix * voiceGain;
 

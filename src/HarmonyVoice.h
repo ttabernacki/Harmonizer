@@ -2,6 +2,7 @@
 
 #include "Constants.h"
 #include <rubberband/RubberBandStretcher.h>
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -29,11 +30,14 @@ public:
     bool isFadingOut() const { return fadingOut_; }
     int getAssignedNote() const { return assignedNote_; }
 
-    // Convert MIDI note number to frequency in Hz.
+    // Convert MIDI note number to frequency in Hz (O(1) table lookup).
     static float midiNoteToFrequency(int noteNumber);
 
 private:
     void updatePitchRatio();
+
+    // Pre-computed MIDI note to frequency lookup table (128 entries)
+    static const std::array<float, 128>& getMidiFreqTable();
 
     std::unique_ptr<RubberBand::RubberBandStretcher> stretcher_;
 

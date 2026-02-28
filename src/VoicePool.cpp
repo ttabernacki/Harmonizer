@@ -59,15 +59,29 @@ void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float de
         if (!found)
         {
             // Find a free voice
+            bool allocated = false;
             for (auto& voice : voices_)
             {
                 if (!voice.isActive())
                 {
                     voice.activate(note, detectedPitchHz);
+                    allocated = true;
                     break;
                 }
             }
-            // If no free voice, the note is ignored (first-held priority)
+
+            // If no free voice, steal a fading-out voice (it's nearly silent anyway)
+            if (!allocated)
+            {
+                for (auto& voice : voices_)
+                {
+                    if (voice.isFadingOut())
+                    {
+                        voice.activate(note, detectedPitchHz);
+                        break;
+                    }
+                }
+            }
         }
     }
 }

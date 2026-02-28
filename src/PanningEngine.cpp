@@ -62,16 +62,17 @@ void PanningEngine::applyPanning(const float* const* voiceBuffers,
         auto& ps = panStates_[static_cast<size_t>(v)];
         const float* buf = voiceBuffers[v];
 
+        // Snap pan smoothing once per block (avoids per-sample trig calls)
+        float blockCoeff = 1.0f - std::pow(1.0f - panSmoothCoeff_, static_cast<float>(numSamples));
+        ps.currentPan += blockCoeff * (ps.targetPan - ps.currentPan);
+
+        // Constant-power panning: compute gains once per block
+        float angle = (ps.currentPan + 1.0f) * 0.5f * (3.14159265f / 2.0f);
+        float gainL = std::cos(angle);
+        float gainR = std::sin(angle);
+
         for (int i = 0; i < numSamples; ++i)
         {
-            // Smooth pan position
-            ps.currentPan += panSmoothCoeff_ * (ps.targetPan - ps.currentPan);
-
-            // Constant-power panning: map pan (-1..+1) to angle (0..pi/2)
-            float angle = (ps.currentPan + 1.0f) * 0.5f * (3.14159265f / 2.0f);
-            float gainL = std::cos(angle);
-            float gainR = std::sin(angle);
-
             leftOut[i]  += buf[i] * gainL;
             rightOut[i] += buf[i] * gainR;
         }

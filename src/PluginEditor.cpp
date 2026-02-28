@@ -8,6 +8,9 @@ static const juce::Colour kTextSecondary{ 0xff8888aa };
 static const juce::Colour kAccent       { 0xff6c8cff };
 static const juce::Colour kMidiGreen    { 0xff44dd66 };
 static const juce::Colour kMidiOff      { 0xff444466 };
+static const juce::Colour kMeterGreen  { 0xff44bb55 };
+static const juce::Colour kMeterYellow { 0xffbbbb33 };
+static const juce::Colour kMeterRed    { 0xffdd4444 };
 
 static const char* const NOTE_NAMES[] = {
     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"
@@ -99,6 +102,31 @@ void HarmonizerEditor::paint(juce::Graphics& g)
     auto ledRect = midiArea.withSizeKeepingCentre(16, 16).translated(0, -10);
     g.setColour(midiLedOn_ ? kMidiGreen : kMidiOff);
     g.fillEllipse(ledRect.toFloat());
+
+    // Input level meter (vertical bar on the left edge)
+    auto meterBounds = getLocalBounds().removeFromLeft(8).reduced(0, 15);
+    g.setColour(kSurface);
+    g.fillRect(meterBounds);
+
+    // Map dB to 0..1 range (-60dB to 0dB)
+    float normLevel = (displayedLevelDb_ + 60.0f) / 60.0f;
+    normLevel = std::clamp(normLevel, 0.0f, 1.0f);
+
+    if (normLevel > 0.0f)
+    {
+        int meterHeight = static_cast<int>(static_cast<float>(meterBounds.getHeight()) * normLevel);
+        auto filledRect = meterBounds.removeFromBottom(meterHeight);
+
+        // Color based on level
+        juce::Colour meterColour = kMeterGreen;
+        if (displayedLevelDb_ > -3.0f)
+            meterColour = kMeterRed;
+        else if (displayedLevelDb_ > -12.0f)
+            meterColour = kMeterYellow;
+
+        g.setColour(meterColour);
+        g.fillRect(filledRect);
+    }
 }
 
 void HarmonizerEditor::resized()
@@ -137,16 +165,25 @@ void HarmonizerEditor::resized()
 
 void HarmonizerEditor::timerCallback()
 {
+    bool needsRepaint = false;
+
     // Update pitch display
     float pitch = processor_.detectedPitchHz.load();
-    if (pitch > 0.0f)
-        pitchValueLabel_.setText(frequencyToNoteName(pitch), juce::dontSendNotification);
-    else
-        pitchValueLabel_.setText("--", juce::dontSendNotification);
+    juce::String pitchText = (pitch > 0.0f) ? frequencyToNoteName(pitch) : "--";
+    if (pitchText != lastPitchText_)
+    {
+        pitchValueLabel_.setText(pitchText, juce::dontSendNotification);
+        lastPitchText_ = pitchText;
+    }
 
     // Update voice count
     int voices = processor_.activeVoiceCount.load();
-    voicesValueLabel_.setText(juce::String(voices) + " / 12", juce::dontSendNotification);
+    juce::String voicesText = juce::String(voices) + " / 12";
+    if (voicesText != lastVoicesText_)
+    {
+        voicesValueLabel_.setText(voicesText, juce::dontSendNotification);
+        lastVoicesText_ = voicesText;
+    }
 
     // Update MIDI LED (stays on for a few frames after activity)
     if (processor_.midiActivity.load())
@@ -160,8 +197,28 @@ void HarmonizerEditor::timerCallback()
         if (midiLedCountdown_ == 0)
             midiLedOn_ = false;
     }
+    if (midiLedOn_ != lastMidiLedState_)
+    {
+        lastMidiLedState_ = midiLedOn_;
+        needsRepaint = true;
+    }
 
-    repaint();
+    // Update input level meter (smoothed decay)
+    float targetDb = processor_.inputLevelDb.load();
+    // Fast attack, slow decay for visual smoothness
+    if (targetDb > displayedLevelDb_)
+        displayedLevelDb_ = targetDb;
+    else
+        displayedLevelDb_ += 0.3f * (targetDb - displayedLevelDb_);
+
+    if (std::abs(displayedLevelDb_ - lastLevelDb_) > 0.5f)
+    {
+        lastLevelDb_ = displayedLevelDb_;
+        needsRepaint = true;
+    }
+
+    if (needsRepaint)
+        repaint();
 }
 
 juce::String HarmonizerEditor::frequencyToNoteName(float freqHz)
