@@ -79,5 +79,14 @@ private:
 
     juce::AudioParameterBool* bypassParam_ = nullptr; // Owned by APVTS
 
+    // Cached raw parameter pointers (avoids string hash lookup every processBlock)
+    std::atomic<float>* paramDryWet_        = nullptr;
+    std::atomic<float>* paramStereoWidth_   = nullptr;
+    std::atomic<float>* paramOutputGain_    = nullptr;
+    std::atomic<float>* paramDetune_        = nullptr;
+    std::atomic<float>* paramPitchCorrect_  = nullptr;
+    std::atomic<float>* paramFormantShift_  = nullptr;
+    std::atomic<float>* paramMidiChannel_   = nullptr;
+
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HarmonizerProcessor)
 };

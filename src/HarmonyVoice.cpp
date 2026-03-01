@@ -145,18 +145,15 @@ void HarmonyVoice::updatePitchRatio()
 {
     if (inputPitchHz_ > 0.0f && targetPitchHz_ > 0.0f)
     {
-        targetPitchRatio_ = targetPitchHz_ / inputPitchHz_;
-
-        // Apply per-voice detune offset (converts cents to ratio multiplier)
-        if (std::abs(detuneOffsetCents_) > 0.01f)
-            targetPitchRatio_ *= std::pow(2.0f, detuneOffsetCents_ / 1200.0f);
+        // detuneRatio_ is precomputed by VoicePool (no std::pow here)
+        targetPitchRatio_ = (targetPitchHz_ / inputPitchHz_) * detuneRatio_;
 
         // Clamp to reasonable range (Rubber Band handles ~0.25x to ~4x well)
         targetPitchRatio_ = std::clamp(targetPitchRatio_, 0.25f, 4.0f);
     }
 }
 
-void HarmonyVoice::process(const float* input, float* output, int numSamples)
+void HarmonyVoice::process(const float* input, float* output, int numSamples, float pitchSmoothBlockCoeff)
 {
     if (!active_ || !prepared_ || numSamples <= 0)
     {
@@ -183,10 +180,8 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples)
         return;
     }
 
-    // Smooth the pitch ratio toward target using correct per-sample exponential filter
-    // Compute per-block coefficient: 1 - (1 - perSampleCoeff)^numSamples
-    float blockCoeff = 1.0f - std::pow(1.0f - pitchSmoothCoeff_, static_cast<float>(numSamples));
-    currentPitchRatio_ += blockCoeff * (targetPitchRatio_ - currentPitchRatio_);
+    // Smooth the pitch ratio toward target (blockCoeff precomputed by VoicePool)
+    currentPitchRatio_ += pitchSmoothBlockCoeff * (targetPitchRatio_ - currentPitchRatio_);
     stretcher_->setPitchScale(static_cast<double>(currentPitchRatio_));
     stretcher_->setFormantScale(static_cast<double>(formantScale_));
 

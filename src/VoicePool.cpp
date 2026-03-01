@@ -9,6 +9,10 @@ void VoicePool::prepare(double sampleRate, int maxBlockSize)
 {
     maxBlockSize_ = maxBlockSize;
 
+    // Compute shared pitch smoothing coefficient (same for all voices)
+    float smoothSamples = static_cast<float>(sampleRate) * kPitchSmoothTimeMs / 1000.0f;
+    pitchSmoothCoeff_ = 1.0f - std::exp(-1.0f / smoothSamples);
+
     for (auto& voice : voices_)
         voice.prepare(sampleRate, maxBlockSize);
 }
@@ -53,13 +57,14 @@ void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float de
         {
             if (voice.isActive() && !voice.isFadingOut())
             {
-                float detuneOffset = 0.0f;
+                float detuneRatio = 1.0f;
                 if (activeTotal > 1 && detuneCents_ > 0.0f)
                 {
                     float t = static_cast<float>(activeIdx) / static_cast<float>(activeTotal - 1);
-                    detuneOffset = detuneCents_ * (2.0f * t - 1.0f);
+                    float offsetCents = detuneCents_ * (2.0f * t - 1.0f);
+                    detuneRatio = std::pow(2.0f, offsetCents / 1200.0f);
                 }
-                voice.setDetuneOffset(detuneOffset);
+                voice.setDetuneRatio(detuneRatio);
                 voice.setFormantScale(formantScale_);
                 ++activeIdx;
             }
@@ -118,11 +123,14 @@ void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float de
 
 void VoicePool::renderVoices(const float* input, float* voiceOutputs[], int numSamples)
 {
+    // Compute pitch smoothing block coefficient once for all voices
+    float blockCoeff = 1.0f - std::pow(1.0f - pitchSmoothCoeff_, static_cast<float>(numSamples));
+
     for (int v = 0; v < kMaxVoices; ++v)
     {
         if (voices_[static_cast<size_t>(v)].isActive())
         {
-            voices_[static_cast<size_t>(v)].process(input, voiceOutputs[v], numSamples);
+            voices_[static_cast<size_t>(v)].process(input, voiceOutputs[v], numSamples, blockCoeff);
         }
         else
         {

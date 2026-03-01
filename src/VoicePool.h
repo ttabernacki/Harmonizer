@@ -41,4 +41,5 @@ private:
     float detuneCents_ = 0.0f;
     float formantScale_ = 1.0f;       // Pre-computed from semitones
     float lastFormantSemitones_ = 0.0f; // Cache to avoid redundant std::pow
+    float pitchSmoothCoeff_ = 0.0f;   // Shared across all voices (same sample rate + constant)
 };

@@ -23,6 +23,15 @@ HarmonizerProcessor::HarmonizerProcessor()
       apvts_(*this, nullptr, "Parameters", createParameterLayout())
 {
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*>(apvts_.getParameter("bypass"));
+
+    // Cache raw parameter pointers once (stable for lifetime of APVTS)
+    paramDryWet_       = apvts_.getRawParameterValue("dryWet");
+    paramStereoWidth_  = apvts_.getRawParameterValue("stereoWidth");
+    paramOutputGain_   = apvts_.getRawParameterValue("outputGain");
+    paramDetune_       = apvts_.getRawParameterValue("detune");
+    paramPitchCorrect_ = apvts_.getRawParameterValue("pitchCorrect");
+    paramFormantShift_ = apvts_.getRawParameterValue("formantShift");
+    paramMidiChannel_  = apvts_.getRawParameterValue("midiChannel");
 }
 
 HarmonizerProcessor::~HarmonizerProcessor() = default;
@@ -128,13 +137,13 @@ void HarmonizerProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     }
 
     smoothedDryWet_.reset(sampleRate, 0.02);
-    smoothedDryWet_.setCurrentAndTargetValue(apvts_.getRawParameterValue("dryWet")->load());
+    smoothedDryWet_.setCurrentAndTargetValue(paramDryWet_->load());
 
     smoothedVoiceGain_.reset(sampleRate, 0.03);
     smoothedVoiceGain_.setCurrentAndTargetValue(1.0f);
 
     smoothedOutputGain_.reset(sampleRate, 0.02);
-    float initGainDb = apvts_.getRawParameterValue("outputGain")->load();
+    float initGainDb = paramOutputGain_->load();
     smoothedOutputGain_.setCurrentAndTargetValue(std::pow(10.0f, initGainDb / 20.0f));
 
     setLatencySamples(voicePool_.getStartDelay());
@@ -187,13 +196,13 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         return;
     }
 
-    // Read parameters
-    float detuneCents = apvts_.getRawParameterValue("detune")->load();
-    float pitchCorrectionStrength = apvts_.getRawParameterValue("pitchCorrect")->load();
-    float formantShiftSemitones = apvts_.getRawParameterValue("formantShift")->load();
-    float stereoWidth = apvts_.getRawParameterValue("stereoWidth")->load();
-    int midiChannel = static_cast<int>(apvts_.getRawParameterValue("midiChannel")->load());
-    float outputGainDb = apvts_.getRawParameterValue("outputGain")->load();
+    // Read parameters (cached pointers — no string hash lookup)
+    float detuneCents = paramDetune_->load();
+    float pitchCorrectionStrength = paramPitchCorrect_->load();
+    float formantShiftSemitones = paramFormantShift_->load();
+    float stereoWidth = paramStereoWidth_->load();
+    int midiChannel = static_cast<int>(paramMidiChannel_->load());
+    float outputGainDb = paramOutputGain_->load();
 
     // Step 1: Process MIDI (with channel filter)
     midiTracker_.setChannelFilter(midiChannel);
@@ -280,7 +289,7 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     panningEngine_.updatePanning(voices);
 
     // Step 7: Update smoothed parameters
-    smoothedDryWet_.setTargetValue(apvts_.getRawParameterValue("dryWet")->load());
+    smoothedDryWet_.setTargetValue(paramDryWet_->load());
     smoothedOutputGain_.setTargetValue(std::pow(10.0f, outputGainDb / 20.0f));
 
     // Step 8: Build stereo output

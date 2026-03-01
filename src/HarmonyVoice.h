@@ -23,14 +23,15 @@ public:
     // Update the detected input pitch (recalculates pitch ratio).
     void updateInputPitch(float inputPitchHz);
 
-    // Set per-voice detune offset in cents (applied to pitch ratio).
-    void setDetuneOffset(float cents) { detuneOffsetCents_ = cents; }
+    // Set per-voice detune ratio directly (precomputed by VoicePool from cents).
+    void setDetuneRatio(float ratio) { detuneRatio_ = ratio; }
 
     // Set formant scale directly (1.0 = no shift). Avoids redundant std::pow per call.
     void setFormantScale(float scale) { formantScale_ = scale; }
 
     // Process one block: pitch-shift input into output.
-    void process(const float* input, float* output, int numSamples);
+    // pitchSmoothBlockCoeff is precomputed once per block by VoicePool.
+    void process(const float* input, float* output, int numSamples, float pitchSmoothBlockCoeff);
 
     bool isActive() const { return active_; }
     bool isFadingOut() const { return fadingOut_; }
@@ -67,7 +68,7 @@ private:
     float fadeGain_ = 0.0f;
     float fadeIncrement_ = 0.0f;     // Per-sample fade-out decrement
 
-    float detuneOffsetCents_ = 0.0f; // Per-voice detune offset
+    float detuneRatio_ = 1.0f;       // Pre-computed detune multiplier (1.0 = no detune)
     float formantScale_ = 1.0f;      // Formant shift ratio (1.0 = no shift)
 
     // Buffers for RubberBand I/O

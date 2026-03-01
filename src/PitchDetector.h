@@ -1,5 +1,7 @@
 #pragma once
 
+#include <juce_dsp/juce_dsp.h>
+#include <memory>
 #include <vector>
 
 class PitchDetector
@@ -27,6 +29,14 @@ private:
 
     // YIN working buffers
     std::vector<float> yinBuffer_;
+
+    // FFT-based autocorrelation (reduces YIN difference function from O(N^2) to O(N log N))
+    std::unique_ptr<juce::dsp::FFT> fft_;
+    int fftOrder_ = 0;
+    int fftSize_ = 0;
+    std::vector<float> fftBufferA_;       // 2*fftSize workspace
+    std::vector<float> fftBufferB_;       // 2*fftSize workspace
+    std::vector<float> powerPrefixSum_;   // bufferSize+1 for incremental energy
 
     static constexpr float yinThreshold_ = 0.15f;
     static constexpr float minFrequency_ = 60.0f;    // Hz — lowest pitch to detect
