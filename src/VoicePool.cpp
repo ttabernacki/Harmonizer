@@ -1,5 +1,6 @@
 #include "VoicePool.h"
 #include <cstring>
+#include <cmath>
 #include <algorithm>
 
 VoicePool::VoicePool() = default;
@@ -10,6 +11,16 @@ void VoicePool::prepare(double sampleRate, int maxBlockSize)
 
     for (auto& voice : voices_)
         voice.prepare(sampleRate, maxBlockSize);
+}
+
+void VoicePool::setFormantShiftSemitones(float semitones)
+{
+    // Only recompute std::pow when the value actually changes
+    if (std::abs(semitones - lastFormantSemitones_) > 0.001f)
+    {
+        lastFormantSemitones_ = semitones;
+        formantScale_ = std::pow(2.0f, semitones / 12.0f);
+    }
 }
 
 void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float detectedPitchHz)
@@ -33,19 +44,40 @@ void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float de
         }
     }
 
-    // Step 2: Update input pitch for all active voices
+    // Step 2: Distribute detune and formant shift BEFORE updating pitch,
+    // so updatePitchRatio() uses the current detune offset (not the stale one).
+    {
+        int activeIdx = 0;
+        int activeTotal = getActiveVoiceCount();
+        for (auto& voice : voices_)
+        {
+            if (voice.isActive() && !voice.isFadingOut())
+            {
+                float detuneOffset = 0.0f;
+                if (activeTotal > 1 && detuneCents_ > 0.0f)
+                {
+                    float t = static_cast<float>(activeIdx) / static_cast<float>(activeTotal - 1);
+                    detuneOffset = detuneCents_ * (2.0f * t - 1.0f);
+                }
+                voice.setDetuneOffset(detuneOffset);
+                voice.setFormantScale(formantScale_);
+                ++activeIdx;
+            }
+        }
+    }
+
+    // Step 3: Update input pitch for all active voices (now uses current detune offset)
     for (auto& voice : voices_)
     {
         if (voice.isActive())
             voice.updateInputPitch(detectedPitchHz);
     }
 
-    // Step 3: Activate new voices for notes that don't have a voice yet
+    // Step 4: Activate new voices for notes that don't have a voice yet
     for (int n = 0; n < numActiveNotes; ++n)
     {
         int note = activeNotes[n];
 
-        // Check if this note already has a voice
         bool found = false;
         for (const auto& voice : voices_)
         {
@@ -58,7 +90,6 @@ void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float de
 
         if (!found)
         {
-            // Find a free voice
             bool allocated = false;
             for (auto& voice : voices_)
             {
@@ -70,7 +101,6 @@ void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float de
                 }
             }
 
-            // If no free voice, steal a fading-out voice (it's nearly silent anyway)
             if (!allocated)
             {
                 for (auto& voice : voices_)
@@ -82,26 +112,6 @@ void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float de
                     }
                 }
             }
-        }
-    }
-
-    // Step 4: Distribute detune and formant shift across active (non-fading) voices
-    int activeIdx = 0;
-    int activeTotal = getActiveVoiceCount();
-    for (auto& voice : voices_)
-    {
-        if (voice.isActive() && !voice.isFadingOut())
-        {
-            // Distribute detune symmetrically: voice 0 gets -detune, last gets +detune
-            float detuneOffset = 0.0f;
-            if (activeTotal > 1 && detuneCents_ > 0.0f)
-            {
-                float t = static_cast<float>(activeIdx) / static_cast<float>(activeTotal - 1);
-                detuneOffset = detuneCents_ * (2.0f * t - 1.0f); // range: -cents to +cents
-            }
-            voice.setDetuneOffset(detuneOffset);
-            voice.setFormantShift(formantShiftSemitones_);
-            ++activeIdx;
         }
     }
 }

@@ -164,9 +164,11 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     inputLevelDb.store((peak > 0.0f) ? 20.0f * std::log10(peak) : -100.0f);
 
     // Step 3: Detect pitch
-    float pitch = pitchDetector_.detectPitch(monoBuffer_.data(), numSamples);
+    float rawPitch = pitchDetector_.detectPitch(monoBuffer_.data(), numSamples);
+    detectedPitchHz.store(rawPitch);  // UI shows raw detected pitch
 
-    // Step 3b: Apply pitch correction (snap toward nearest semitone)
+    // Step 3b: Apply pitch correction for voice allocation (snap toward nearest semitone)
+    float pitch = rawPitch;
     if (pitch > 0.0f && pitchCorrectionStrength > 0.0f)
     {
         float midiNote = 69.0f + 12.0f * std::log2(pitch / 440.0f);
@@ -177,8 +179,6 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             pitch = pitch + pitchCorrectionStrength * (correctedPitch - pitch);
         }
     }
-
-    detectedPitchHz.store(pitch);
 
     // Step 4: Update voice allocation with detune and formant params
     voicePool_.setDetuneCents(detuneCents);

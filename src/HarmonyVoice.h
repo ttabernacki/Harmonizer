@@ -26,8 +26,8 @@ public:
     // Set per-voice detune offset in cents (applied to pitch ratio).
     void setDetuneOffset(float cents) { detuneOffsetCents_ = cents; }
 
-    // Set formant scale in semitones (independent of pitch shift).
-    void setFormantShift(float semitones);
+    // Set formant scale directly (1.0 = no shift). Avoids redundant std::pow per call.
+    void setFormantScale(float scale) { formantScale_ = scale; }
 
     // Process one block: pitch-shift input into output.
     void process(const float* input, float* output, int numSamples);

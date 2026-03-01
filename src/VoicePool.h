@@ -17,8 +17,8 @@ public:
     // Set detune amount in cents — distributed symmetrically across voices.
     void setDetuneCents(float cents) { detuneCents_ = cents; }
 
-    // Set formant shift in semitones — applied uniformly to all voices.
-    void setFormantShiftSemitones(float semitones) { formantShiftSemitones_ = semitones; }
+    // Set formant shift in semitones — converted to scale once, applied uniformly to all voices.
+    void setFormantShiftSemitones(float semitones);
 
     // Update voice allocation based on currently held MIDI notes and detected pitch.
     void updateNotes(const int* activeNotes, int numActiveNotes, float detectedPitchHz);
@@ -39,5 +39,6 @@ private:
     std::array<HarmonyVoice, kMaxVoices> voices_;
     int maxBlockSize_ = 512;
     float detuneCents_ = 0.0f;
-    float formantShiftSemitones_ = 0.0f;
+    float formantScale_ = 1.0f;       // Pre-computed from semitones
+    float lastFormantSemitones_ = 0.0f; // Cache to avoid redundant std::pow
 };

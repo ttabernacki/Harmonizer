@@ -9,7 +9,15 @@ public:
     MidiNoteTracker() = default;
 
     // Set MIDI channel filter: 0 = omni (all channels), 1-16 = specific channel.
-    void setChannelFilter(int channel) { channelFilter_ = channel; }
+    // Clears held notes on change to prevent stuck notes from the old channel.
+    void setChannelFilter(int channel)
+    {
+        if (channel != channelFilter_)
+        {
+            channelFilter_ = channel;
+            numActive_ = 0;
+        }
+    }
 
     // Process all MIDI messages in the buffer, updating the active note set.
     void processMidiBuffer(const juce::MidiBuffer& midiMessages);

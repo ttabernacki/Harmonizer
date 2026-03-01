@@ -32,11 +32,6 @@ float HarmonyVoice::midiNoteToFrequency(int noteNumber)
     return 440.0f * std::pow(2.0f, (static_cast<float>(noteNumber) - 69.0f) / 12.0f);
 }
 
-void HarmonyVoice::setFormantShift(float semitones)
-{
-    formantScale_ = std::pow(2.0f, semitones / 12.0f);
-}
-
 void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
 {
     sampleRate_ = sampleRate;
