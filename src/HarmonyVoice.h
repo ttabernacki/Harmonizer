@@ -23,6 +23,12 @@ public:
     // Update the detected input pitch (recalculates pitch ratio).
     void updateInputPitch(float inputPitchHz);
 
+    // Set per-voice detune offset in cents (applied to pitch ratio).
+    void setDetuneOffset(float cents) { detuneOffsetCents_ = cents; }
+
+    // Set formant scale in semitones (independent of pitch shift).
+    void setFormantShift(float semitones);
+
     // Process one block: pitch-shift input into output.
     void process(const float* input, float* output, int numSamples);
 
@@ -60,6 +66,9 @@ private:
 
     float fadeGain_ = 0.0f;
     float fadeIncrement_ = 0.0f;     // Per-sample fade-out decrement
+
+    float detuneOffsetCents_ = 0.0f; // Per-voice detune offset
+    float formantScale_ = 1.0f;      // Formant shift ratio (1.0 = no shift)
 
     // Buffers for RubberBand I/O
     std::vector<float> stretcherOutput_;

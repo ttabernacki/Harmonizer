@@ -45,6 +45,10 @@ public:
     std::atomic<bool>  midiActivity{ false };
     std::atomic<float> inputLevelDb{ -100.0f };
 
+    // Held-notes bitmask for visual keyboard (notes 0-63 in low, 64-127 in high)
+    std::atomic<uint64_t> heldNotesBitmaskLow{ 0 };
+    std::atomic<uint64_t> heldNotesBitmaskHigh{ 0 };
+
     juce::AudioProcessorValueTreeState& getAPVTS() { return apvts_; }
 
 private:
@@ -64,11 +68,10 @@ private:
     std::array<float*, kMaxVoices> voiceRenderPtrs_{};
     int allocatedBlockSize_ = 0;
 
-    // Smoothed dry/wet parameter to prevent zipper noise
+    // Smoothed parameters to prevent zipper noise
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedDryWet_;
-
-    // Smoothed gain compensation to avoid volume jumps when voice count changes
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedVoiceGain_;
+    juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedOutputGain_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HarmonizerProcessor)
 };

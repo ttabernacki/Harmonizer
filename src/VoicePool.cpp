@@ -84,6 +84,26 @@ void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float de
             }
         }
     }
+
+    // Step 4: Distribute detune and formant shift across active (non-fading) voices
+    int activeIdx = 0;
+    int activeTotal = getActiveVoiceCount();
+    for (auto& voice : voices_)
+    {
+        if (voice.isActive() && !voice.isFadingOut())
+        {
+            // Distribute detune symmetrically: voice 0 gets -detune, last gets +detune
+            float detuneOffset = 0.0f;
+            if (activeTotal > 1 && detuneCents_ > 0.0f)
+            {
+                float t = static_cast<float>(activeIdx) / static_cast<float>(activeTotal - 1);
+                detuneOffset = detuneCents_ * (2.0f * t - 1.0f); // range: -cents to +cents
+            }
+            voice.setDetuneOffset(detuneOffset);
+            voice.setFormantShift(formantShiftSemitones_);
+            ++activeIdx;
+        }
+    }
 }
 
 void VoicePool::renderVoices(const float* input, float* voiceOutputs[], int numSamples)

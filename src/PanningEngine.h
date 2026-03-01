@@ -12,6 +12,9 @@ public:
 
     void prepare(double sampleRate, int maxBlockSize);
 
+    // Set stereo width: 0.0 = mono center, 1.0 = full spread.
+    void setWidth(float width) { widthScale_ = width; }
+
     // Recalculate pan positions based on which voices are active and their MIDI notes.
     void updatePanning(const std::array<HarmonyVoice, kMaxVoices>& voices);
 
@@ -33,4 +36,5 @@ private:
     std::array<PanState, kMaxVoices> panStates_{};
     std::array<VoiceInfo, kMaxVoices> sortBuffer_{};  // Pre-allocated sort buffer (no heap alloc)
     float panSmoothCoeff_ = 0.0f;
+    float widthScale_ = 1.0f;
 };

@@ -8,6 +8,9 @@ class MidiNoteTracker
 public:
     MidiNoteTracker() = default;
 
+    // Set MIDI channel filter: 0 = omni (all channels), 1-16 = specific channel.
+    void setChannelFilter(int channel) { channelFilter_ = channel; }
+
     // Process all MIDI messages in the buffer, updating the active note set.
     void processMidiBuffer(const juce::MidiBuffer& midiMessages);
 
@@ -35,4 +38,5 @@ private:
     std::array<int, 128> activeNotes_{};
     int numActive_ = 0;
     bool hadActivity_ = false;
+    int channelFilter_ = 0; // 0 = omni
 };

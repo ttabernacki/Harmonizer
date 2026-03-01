@@ -24,19 +24,50 @@ juce::AudioProcessorValueTreeState::ParameterLayout HarmonizerProcessor::createP
         juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
         0.5f));
 
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("stereoWidth", 1),
+        "Stereo Width",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        1.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("outputGain", 1),
+        "Output Gain",
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
+        0.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("detune", 1),
+        "Detune",
+        juce::NormalisableRange<float>(0.0f, 50.0f, 0.1f),
+        0.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("pitchCorrect", 1),
+        "Pitch Correction",
+        juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+        0.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("formantShift", 1),
+        "Formant Shift",
+        juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f),
+        0.0f));
+
+    params.push_back(std::make_unique<juce::AudioParameterInt>(
+        juce::ParameterID("midiChannel", 1),
+        "MIDI Channel",
+        0, 16, 0));
+
     return { params.begin(), params.end() };
 }
 
 bool HarmonizerProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
-    // Must have mono input
     if (layouts.getMainInputChannelSet() != juce::AudioChannelSet::mono())
         return false;
-
-    // Output must be stereo
     if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
         return false;
-
     return true;
 }
 
@@ -47,7 +78,6 @@ void HarmonizerProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
     voicePool_.prepare(sampleRate, samplesPerBlock);
     panningEngine_.prepare(sampleRate, samplesPerBlock);
 
-    // Pre-allocate all buffers used in processBlock
     allocatedBlockSize_ = samplesPerBlock;
     monoBuffer_.resize(static_cast<size_t>(samplesPerBlock), 0.0f);
     wetLeftBuffer_.resize(static_cast<size_t>(samplesPerBlock), 0.0f);
@@ -59,16 +89,16 @@ void HarmonizerProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
         voiceRenderPtrs_[static_cast<size_t>(i)] = voiceRenderStorage_[static_cast<size_t>(i)].data();
     }
 
-    // Dry/wet smoother: ~20ms ramp time to eliminate zipper noise
     smoothedDryWet_.reset(sampleRate, 0.02);
     smoothedDryWet_.setCurrentAndTargetValue(apvts_.getRawParameterValue("dryWet")->load());
 
-    // Gain compensation smoother: ~30ms ramp to avoid volume jumps on voice count changes
     smoothedVoiceGain_.reset(sampleRate, 0.03);
     smoothedVoiceGain_.setCurrentAndTargetValue(1.0f);
 
-    // Report RubberBand's internal processing delay to the host so the DAW
-    // can time-align the dry signal with the pitch-shifted wet harmonies.
+    smoothedOutputGain_.reset(sampleRate, 0.02);
+    float initGainDb = apvts_.getRawParameterValue("outputGain")->load();
+    smoothedOutputGain_.setCurrentAndTargetValue(std::pow(10.0f, initGainDb / 20.0f));
+
     setLatencySamples(voicePool_.getStartDelay());
 }
 
@@ -87,13 +117,37 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     if (numSamples == 0)
         return;
 
-    // Guard: clamp to allocated size to prevent buffer overflows if host
-    // sends a block larger than what was specified in prepareToPlay.
     numSamples = std::min(numSamples, allocatedBlockSize_);
 
-    // Step 1: Process MIDI
+    // Read parameters
+    float detuneCents = apvts_.getRawParameterValue("detune")->load();
+    float pitchCorrectionStrength = apvts_.getRawParameterValue("pitchCorrect")->load();
+    float formantShiftSemitones = apvts_.getRawParameterValue("formantShift")->load();
+    float stereoWidth = apvts_.getRawParameterValue("stereoWidth")->load();
+    int midiChannel = static_cast<int>(apvts_.getRawParameterValue("midiChannel")->load());
+    float outputGainDb = apvts_.getRawParameterValue("outputGain")->load();
+
+    // Step 1: Process MIDI (with channel filter)
+    midiTracker_.setChannelFilter(midiChannel);
     midiTracker_.processMidiBuffer(midiMessages);
     midiActivity.store(midiTracker_.hasActivity());
+
+    // Update held-notes bitmask for visual keyboard
+    {
+        int numNotes = 0;
+        const int* notes = midiTracker_.getActiveNotes(numNotes);
+        uint64_t low = 0, high = 0;
+        for (int i = 0; i < numNotes; ++i)
+        {
+            int n = notes[i];
+            if (n >= 0 && n < 64)
+                low |= (uint64_t(1) << n);
+            else if (n >= 64 && n < 128)
+                high |= (uint64_t(1) << (n - 64));
+        }
+        heldNotesBitmaskLow.store(low);
+        heldNotesBitmaskHigh.store(high);
+    }
 
     // Step 2: Copy mono input
     const float* inputData = buffer.getReadPointer(0);
@@ -107,14 +161,29 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         if (absVal > peak)
             peak = absVal;
     }
-    float levelDb = (peak > 0.0f) ? 20.0f * std::log10(peak) : -100.0f;
-    inputLevelDb.store(levelDb);
+    inputLevelDb.store((peak > 0.0f) ? 20.0f * std::log10(peak) : -100.0f);
 
     // Step 3: Detect pitch
     float pitch = pitchDetector_.detectPitch(monoBuffer_.data(), numSamples);
+
+    // Step 3b: Apply pitch correction (snap toward nearest semitone)
+    if (pitch > 0.0f && pitchCorrectionStrength > 0.0f)
+    {
+        float midiNote = 69.0f + 12.0f * std::log2(pitch / 440.0f);
+        int snappedNote = static_cast<int>(std::round(midiNote));
+        if (snappedNote >= 0 && snappedNote < 128)
+        {
+            float correctedPitch = HarmonyVoice::midiNoteToFrequency(snappedNote);
+            pitch = pitch + pitchCorrectionStrength * (correctedPitch - pitch);
+        }
+    }
+
     detectedPitchHz.store(pitch);
 
-    // Step 4: Update voice allocation
+    // Step 4: Update voice allocation with detune and formant params
+    voicePool_.setDetuneCents(detuneCents);
+    voicePool_.setFormantShiftSemitones(formantShiftSemitones);
+
     int numActiveNotes = 0;
     const int* activeNotes = midiTracker_.getActiveNotes(numActiveNotes);
     voicePool_.updateNotes(activeNotes, numActiveNotes, pitch);
@@ -122,43 +191,43 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     int activeCount = voicePool_.getActiveVoiceCount();
     activeVoiceCount.store(activeCount);
 
-    // Step 5: Render each voice individually (for per-voice panning)
+    // Step 5: Render each voice individually
     for (int i = 0; i < kMaxVoices; ++i)
         voiceRenderPtrs_[static_cast<size_t>(i)] = voiceRenderStorage_[static_cast<size_t>(i)].data();
 
     voicePool_.renderVoices(monoBuffer_.data(), voiceRenderPtrs_.data(), numSamples);
 
-    // Step 6: Update panning positions
+    // Step 6: Update panning with stereo width
     const auto& voices = voicePool_.getVoices();
+    panningEngine_.setWidth(stereoWidth);
     panningEngine_.updatePanning(voices);
 
-    // Step 7: Smoothed dry/wet parameter (prevents zipper noise on knob movement)
+    // Step 7: Update smoothed parameters
     smoothedDryWet_.setTargetValue(apvts_.getRawParameterValue("dryWet")->load());
+    smoothedOutputGain_.setTargetValue(std::pow(10.0f, outputGainDb / 20.0f));
 
     // Step 8: Build stereo output
     float* leftOut  = buffer.getWritePointer(0);
     float* rightOut = (numOutputChannels >= 2) ? buffer.getWritePointer(1) : nullptr;
 
-    // Apply per-voice panning into wet buffers
     std::memset(wetLeftBuffer_.data(), 0, static_cast<size_t>(numSamples) * sizeof(float));
     std::memset(wetRightBuffer_.data(), 0, static_cast<size_t>(numSamples) * sizeof(float));
 
     panningEngine_.applyPanning(voiceRenderPtrs_.data(), voices,
                                  wetLeftBuffer_.data(), wetRightBuffer_.data(), numSamples);
 
-    // Gain compensation: attenuate wet signal when multiple voices are active to prevent
-    // clipping. Scale by 1/sqrt(N) for N active voices (constant-power summation).
-    // Smoothed to avoid volume jumps when voice count changes abruptly.
+    // Smoothed gain compensation
     float targetVoiceGain = 1.0f;
     if (activeCount > 1)
         targetVoiceGain = 1.0f / std::sqrt(static_cast<float>(activeCount));
     smoothedVoiceGain_.setTargetValue(targetVoiceGain);
 
-    // Mix dry + wet per-sample with smoothed parameters
+    // Mix dry + wet per-sample with smoothed parameters + output gain
     for (int i = 0; i < numSamples; ++i)
     {
         float mix = smoothedDryWet_.getNextValue();
         float voiceGain = smoothedVoiceGain_.getNextValue();
+        float outGain = smoothedOutputGain_.getNextValue();
         float dryGain = 1.0f - mix;
         float wetGain = mix * voiceGain;
 
@@ -166,12 +235,11 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         float wetL = wetLeftBuffer_[static_cast<size_t>(i)];
         float wetR = wetRightBuffer_[static_cast<size_t>(i)];
 
-        leftOut[i] = dry * dryGain + wetL * wetGain;
+        leftOut[i] = (dry * dryGain + wetL * wetGain) * outGain;
         if (rightOut != nullptr)
-            rightOut[i] = dry * dryGain + wetR * wetGain;
+            rightOut[i] = (dry * dryGain + wetR * wetGain) * outGain;
     }
 
-    // Clear MIDI buffer so downstream plugins don't re-process
     midiMessages.clear();
 }
 
@@ -194,7 +262,6 @@ void HarmonizerProcessor::setStateInformation(const void* data, int sizeInBytes)
         apvts_.replaceState(juce::ValueTree::fromXml(*xml));
 }
 
-// JUCE plugin instantiation
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
 {
     return new HarmonizerProcessor();

@@ -8,6 +8,10 @@ void MidiNoteTracker::processMidiBuffer(const juce::MidiBuffer& midiMessages)
     {
         auto msg = metadata.getMessage();
 
+        // Channel filter: 0 = omni (accept all), 1-16 = specific channel
+        if (channelFilter_ > 0 && msg.getChannel() != channelFilter_)
+            continue;
+
         if (msg.isNoteOn() && msg.getVelocity() > 0)
         {
             addNote(msg.getNoteNumber());

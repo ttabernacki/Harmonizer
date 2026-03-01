@@ -14,13 +14,16 @@ public:
 
     void prepare(double sampleRate, int maxBlockSize);
 
+    // Set detune amount in cents — distributed symmetrically across voices.
+    void setDetuneCents(float cents) { detuneCents_ = cents; }
+
+    // Set formant shift in semitones — applied uniformly to all voices.
+    void setFormantShiftSemitones(float semitones) { formantShiftSemitones_ = semitones; }
+
     // Update voice allocation based on currently held MIDI notes and detected pitch.
-    // Uses first-held priority: if >12 notes are held, excess notes are ignored.
     void updateNotes(const int* activeNotes, int numActiveNotes, float detectedPitchHz);
 
     // Render each active voice individually into the per-voice output buffers.
-    // voiceOutputs[i] must point to a buffer of at least numSamples floats.
-    // Inactive voices get zeroed.
     void renderVoices(const float* input, float* voiceOutputs[], int numSamples);
 
     // Returns the number of currently active (non-fading) voices.
@@ -35,4 +38,6 @@ public:
 private:
     std::array<HarmonyVoice, kMaxVoices> voices_;
     int maxBlockSize_ = 512;
+    float detuneCents_ = 0.0f;
+    float formantShiftSemitones_ = 0.0f;
 };

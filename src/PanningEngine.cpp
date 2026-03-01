@@ -41,10 +41,10 @@ void PanningEngine::updatePanning(const std::array<HarmonyVoice, kMaxVoices>& vo
     }
     else
     {
-        // Distribute evenly from -0.8 (left) to +0.8 (right)
+        // Distribute evenly from -0.8 (left) to +0.8 (right), scaled by width
         for (int i = 0; i < count; ++i)
         {
-            float pan = -0.8f + 1.6f * static_cast<float>(i) / static_cast<float>(count - 1);
+            float pan = (-0.8f + 1.6f * static_cast<float>(i) / static_cast<float>(count - 1)) * widthScale_;
             panStates_[static_cast<size_t>(sortBuffer_[static_cast<size_t>(i)].index)].targetPan = pan;
         }
     }

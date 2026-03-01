@@ -32,6 +32,11 @@ float HarmonyVoice::midiNoteToFrequency(int noteNumber)
     return 440.0f * std::pow(2.0f, (static_cast<float>(noteNumber) - 69.0f) / 12.0f);
 }
 
+void HarmonyVoice::setFormantShift(float semitones)
+{
+    formantScale_ = std::pow(2.0f, semitones / 12.0f);
+}
+
 void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
 {
     sampleRate_ = sampleRate;
@@ -147,6 +152,10 @@ void HarmonyVoice::updatePitchRatio()
     {
         targetPitchRatio_ = targetPitchHz_ / inputPitchHz_;
 
+        // Apply per-voice detune offset (converts cents to ratio multiplier)
+        if (std::abs(detuneOffsetCents_) > 0.01f)
+            targetPitchRatio_ *= std::pow(2.0f, detuneOffsetCents_ / 1200.0f);
+
         // Clamp to reasonable range (Rubber Band handles ~0.25x to ~4x well)
         targetPitchRatio_ = std::clamp(targetPitchRatio_, 0.25f, 4.0f);
     }
@@ -184,6 +193,7 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples)
     float blockCoeff = 1.0f - std::pow(1.0f - pitchSmoothCoeff_, static_cast<float>(numSamples));
     currentPitchRatio_ += blockCoeff * (targetPitchRatio_ - currentPitchRatio_);
     stretcher_->setPitchScale(static_cast<double>(currentPitchRatio_));
+    stretcher_->setFormantScale(static_cast<double>(formantScale_));
 
     // Feed input to RubberBand
     const float* inputPtr = input;
