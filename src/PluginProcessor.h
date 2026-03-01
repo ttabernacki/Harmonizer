@@ -30,6 +30,9 @@ public:
     bool isMidiEffect() const override { return false; }
     double getTailLengthSeconds() const override { return 0.0; }
 
+    // VST3 bypass support (required by spec, expected by Ableton)
+    juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParam_; }
+
     int getNumPrograms() override { return 1; }
     int getCurrentProgram() override { return 0; }
     void setCurrentProgram(int) override {}
@@ -72,6 +75,8 @@ private:
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedDryWet_;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedVoiceGain_;
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> smoothedOutputGain_;
+
+    juce::AudioParameterBool* bypassParam_ = nullptr; // Owned by APVTS
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HarmonizerProcessor)
 };

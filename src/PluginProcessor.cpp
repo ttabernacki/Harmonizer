@@ -6,10 +6,11 @@
 
 HarmonizerProcessor::HarmonizerProcessor()
     : AudioProcessor(BusesProperties()
-                     .withInput("Input", juce::AudioChannelSet::mono(), true)
+                     .withInput("Input", juce::AudioChannelSet::stereo(), true)
                      .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
       apvts_(*this, nullptr, "Parameters", createParameterLayout())
 {
+    bypassParam_ = dynamic_cast<juce::AudioParameterBool*>(apvts_.getParameter("bypass"));
 }
 
 HarmonizerProcessor::~HarmonizerProcessor() = default;
@@ -59,12 +60,18 @@ juce::AudioProcessorValueTreeState::ParameterLayout HarmonizerProcessor::createP
         "MIDI Channel",
         0, 16, 0));
 
+    params.push_back(std::make_unique<juce::AudioParameterBool>(
+        juce::ParameterID("bypass", 1),
+        "Bypass",
+        false));
+
     return { params.begin(), params.end() };
 }
 
 bool HarmonizerProcessor::isBusesLayoutSupported(const BusesLayout& layouts) const
 {
-    if (layouts.getMainInputChannelSet() != juce::AudioChannelSet::mono())
+    auto inSet = layouts.getMainInputChannelSet();
+    if (inSet != juce::AudioChannelSet::mono() && inSet != juce::AudioChannelSet::stereo())
         return false;
     if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
         return false;
@@ -112,12 +119,35 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     juce::ScopedNoDenormals noDenormals;
 
     int numSamples = buffer.getNumSamples();
+    int numInputChannels = getTotalNumInputChannels();
     int numOutputChannels = getTotalNumOutputChannels();
 
     if (numSamples == 0)
         return;
 
     numSamples = std::min(numSamples, allocatedBlockSize_);
+
+    // Bypass: pass input through to output unprocessed
+    if (bypassParam_ != nullptr && bypassParam_->get())
+    {
+        // Copy input channel(s) to output — mono input gets copied to both L/R
+        const float* inL = buffer.getReadPointer(0);
+        float* outL = buffer.getWritePointer(0);
+        float* outR = (numOutputChannels >= 2) ? buffer.getWritePointer(1) : nullptr;
+
+        if (outL != inL)
+            std::memcpy(outL, inL, static_cast<size_t>(numSamples) * sizeof(float));
+
+        if (outR != nullptr)
+        {
+            const float* inR = (numInputChannels >= 2) ? buffer.getReadPointer(1) : inL;
+            if (outR != inR)
+                std::memcpy(outR, inR, static_cast<size_t>(numSamples) * sizeof(float));
+        }
+
+        midiMessages.clear();
+        return;
+    }
 
     // Read parameters
     float detuneCents = apvts_.getRawParameterValue("detune")->load();
@@ -149,9 +179,18 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         heldNotesBitmaskHigh.store(high);
     }
 
-    // Step 2: Copy mono input
-    const float* inputData = buffer.getReadPointer(0);
-    std::memcpy(monoBuffer_.data(), inputData, static_cast<size_t>(numSamples) * sizeof(float));
+    // Step 2: Extract mono input (sum to mono if stereo input)
+    const float* inputL = buffer.getReadPointer(0);
+    if (numInputChannels >= 2)
+    {
+        const float* inputR = buffer.getReadPointer(1);
+        for (int i = 0; i < numSamples; ++i)
+            monoBuffer_[static_cast<size_t>(i)] = 0.5f * (inputL[i] + inputR[i]);
+    }
+    else
+    {
+        std::memcpy(monoBuffer_.data(), inputL, static_cast<size_t>(numSamples) * sizeof(float));
+    }
 
     // Compute input level (peak) for UI meter
     float peak = 0.0f;
