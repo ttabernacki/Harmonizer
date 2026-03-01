@@ -57,6 +57,7 @@ public:
 private:
     juce::AudioProcessorValueTreeState apvts_;
     static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+    static BusesProperties makeDefaultBuses();
 
     PitchDetector pitchDetector_;
     MidiNoteTracker midiTracker_;

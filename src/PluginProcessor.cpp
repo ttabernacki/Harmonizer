@@ -4,10 +4,22 @@
 #include <cmath>
 #include <algorithm>
 
+HarmonizerProcessor::BusesProperties HarmonizerProcessor::makeDefaultBuses()
+{
+    auto props = BusesProperties()
+        .withInput("Input", juce::AudioChannelSet::stereo(), true)
+        .withOutput("Main", juce::AudioChannelSet::stereo(), true)
+        .withOutput("Harmony Sum", juce::AudioChannelSet::stereo(), false);
+
+    for (int i = 0; i < kMaxVoices; ++i)
+        props = props.withOutput("Voice " + juce::String(i + 1),
+                                  juce::AudioChannelSet::mono(), false);
+
+    return props;
+}
+
 HarmonizerProcessor::HarmonizerProcessor()
-    : AudioProcessor(BusesProperties()
-                     .withInput("Input", juce::AudioChannelSet::stereo(), true)
-                     .withOutput("Output", juce::AudioChannelSet::stereo(), true)),
+    : AudioProcessor(makeDefaultBuses()),
       apvts_(*this, nullptr, "Parameters", createParameterLayout())
 {
     bypassParam_ = dynamic_cast<juce::AudioParameterBool*>(apvts_.getParameter("bypass"));
@@ -73,8 +85,27 @@ bool HarmonizerProcessor::isBusesLayoutSupported(const BusesLayout& layouts) con
     auto inSet = layouts.getMainInputChannelSet();
     if (inSet != juce::AudioChannelSet::mono() && inSet != juce::AudioChannelSet::stereo())
         return false;
+
+    // Main output (bus 0): must be stereo
     if (layouts.getMainOutputChannelSet() != juce::AudioChannelSet::stereo())
         return false;
+
+    // Harmony Sum (bus 1): stereo or disabled
+    if (static_cast<int>(layouts.outputBuses.size()) > 1)
+    {
+        auto set = layouts.outputBuses[1];
+        if (!set.isDisabled() && set != juce::AudioChannelSet::stereo())
+            return false;
+    }
+
+    // Individual voice buses (bus 2..13): mono or disabled
+    for (int i = 2; i < static_cast<int>(layouts.outputBuses.size()); ++i)
+    {
+        auto set = layouts.outputBuses[i];
+        if (!set.isDisabled() && set != juce::AudioChannelSet::mono())
+            return false;
+    }
+
     return true;
 }
 
@@ -143,6 +174,13 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
             const float* inR = (numInputChannels >= 2) ? buffer.getReadPointer(1) : inL;
             if (outR != inR)
                 std::memcpy(outR, inR, static_cast<size_t>(numSamples) * sizeof(float));
+        }
+
+        // Clear auxiliary output buses when bypassed
+        for (int busIdx = 1; busIdx < getBusCount(false); ++busIdx)
+        {
+            auto auxBus = getBusBuffer(buffer, false, busIdx);
+            auxBus.clear();
         }
 
         midiMessages.clear();
@@ -277,6 +315,35 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         leftOut[i] = (dry * dryGain + wetL * wetGain) * outGain;
         if (rightOut != nullptr)
             rightOut[i] = (dry * dryGain + wetR * wetGain) * outGain;
+    }
+
+    // Step 9: Write to auxiliary output buses (if enabled by host)
+    // Harmony Sum bus (index 1): summed wet voices with panning applied
+    {
+        auto harmonySumBus = getBusBuffer(buffer, false, 1);
+        if (harmonySumBus.getNumChannels() >= 2)
+        {
+            std::memcpy(harmonySumBus.getWritePointer(0), wetLeftBuffer_.data(),
+                        static_cast<size_t>(numSamples) * sizeof(float));
+            std::memcpy(harmonySumBus.getWritePointer(1), wetRightBuffer_.data(),
+                        static_cast<size_t>(numSamples) * sizeof(float));
+        }
+    }
+
+    // Individual voice buses (indices 2..13): mono pre-panning voice signal
+    for (int v = 0; v < kMaxVoices; ++v)
+    {
+        auto voiceBus = getBusBuffer(buffer, false, 2 + v);
+        if (voiceBus.getNumChannels() >= 1)
+        {
+            if (voices[static_cast<size_t>(v)].isActive())
+                std::memcpy(voiceBus.getWritePointer(0),
+                            voiceRenderPtrs_[static_cast<size_t>(v)],
+                            static_cast<size_t>(numSamples) * sizeof(float));
+            else
+                std::memset(voiceBus.getWritePointer(0), 0,
+                            static_cast<size_t>(numSamples) * sizeof(float));
+        }
     }
 
     midiMessages.clear();
