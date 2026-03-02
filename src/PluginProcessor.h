@@ -120,6 +120,8 @@ private:
     std::atomic<float>* paramPitchCorrect_  = nullptr;
     std::atomic<float>* paramFormantShift_  = nullptr;
     std::atomic<float>* paramMidiChannel_   = nullptr;
+    std::atomic<float>* paramAttack_        = nullptr;
+    std::atomic<float>* paramRelease_       = nullptr;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(HarmonizerProcessor)
 };

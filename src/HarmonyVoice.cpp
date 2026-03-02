@@ -40,6 +40,32 @@ float HarmonyVoice::midiNoteToFrequency(int noteNumber)
 }
 
 // ============================================================================
+// Envelope timing setters
+// ============================================================================
+
+void HarmonyVoice::setAttackMs(float ms)
+{
+    if (ms <= 0.0f)
+    {
+        attackIncrement_ = 0.0f;  // 0 means instant attack (fadeGain_ jumps to 1.0)
+    }
+    else
+    {
+        float attackSamples = static_cast<float>(sampleRate_) * ms / 1000.0f;
+        attackIncrement_ = 1.0f / attackSamples;
+    }
+}
+
+void HarmonyVoice::setReleaseMs(float ms)
+{
+    // Enforce a minimum of ~0.5 ms to avoid division by zero; the parameter
+    // range already enforces ≥10 ms so this is just a safety net.
+    ms = std::max(ms, 0.5f);
+    float releaseSamples = static_cast<float>(sampleRate_) * ms / 1000.0f;
+    releaseDecrement_ = 1.0f / releaseSamples;
+}
+
+// ============================================================================
 // Prepare — allocate RubberBand stretcher and work buffers
 // ============================================================================
 
@@ -54,9 +80,10 @@ void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
     float smoothSamples = static_cast<float>(sampleRate) * kPitchSmoothTimeMs / 1000.0f;
     pitchSmoothCoeff_ = 1.0f - std::exp(-1.0f / smoothSamples);
 
-    // Linear fade-out: reach zero gain in exactly kFadeOutTimeMs
+    // Default envelope: instant attack, kFadeOutTimeMs release
+    attackIncrement_ = 0.0f;
     float fadeSamples = static_cast<float>(sampleRate) * kFadeOutTimeMs / 1000.0f;
-    fadeIncrement_ = 1.0f / fadeSamples;
+    releaseDecrement_ = 1.0f / fadeSamples;
 
     // --- RubberBand stretcher configuration ---
     //
@@ -99,6 +126,7 @@ void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
     // Reset state
     active_ = false;
     fadingOut_ = false;
+    attacking_ = false;
     assignedNote_ = -1;
     currentPitchRatio_ = 1.0f;
     targetPitchRatio_ = 1.0f;
@@ -118,7 +146,19 @@ void HarmonyVoice::activate(int midiNote, float inputPitchHz)
     targetPitchHz_ = midiNoteToFrequency(midiNote);
     inputPitchHz_ = inputPitchHz;
     fadingOut_ = false;
-    fadeGain_ = 1.0f;
+
+    // Start the attack envelope: if attackIncrement_ > 0, ramp from 0 → 1;
+    // otherwise jump straight to full gain.
+    if (attackIncrement_ > 0.0f)
+    {
+        fadeGain_ = 0.0f;
+        attacking_ = true;
+    }
+    else
+    {
+        fadeGain_ = 1.0f;
+        attacking_ = false;
+    }
 
     updatePitchRatio();
 
@@ -157,9 +197,14 @@ void HarmonyVoice::activate(int midiNote, float inputPitchHz)
 void HarmonyVoice::deactivate()
 {
     // Don't immediately kill the voice — set fadingOut_ so that process()
-    // ramps the gain to zero over kFadeOutTimeMs, preventing clicks.
+    // ramps the gain to zero over the release time, preventing clicks.
+    // If we were still in the attack phase, the release starts from wherever
+    // fadeGain_ currently is (no jump).
     if (active_)
+    {
         fadingOut_ = true;
+        attacking_ = false;
+    }
 }
 
 // ============================================================================
@@ -229,9 +274,6 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples, fl
     }
 
     // --- Smooth the pitch ratio toward its target ---
-    // pitchSmoothBlockCoeff = 1 - (1 - perSampleCoeff)^numSamples
-    // This is the "how far do we move in one block" version of per-sample
-    // exponential smoothing, computed once by VoicePool for all voices.
     currentPitchRatio_ += pitchSmoothBlockCoeff * (targetPitchRatio_ - currentPitchRatio_);
     stretcher_->setPitchScale(static_cast<double>(currentPitchRatio_));
     stretcher_->setFormantScale(static_cast<double>(formantScale_));
@@ -252,19 +294,30 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples, fl
     float* outPtr = stretcherOutput_.data();
     stretcher_->retrieve(&outPtr, toRetrieve);
 
-    // --- Copy to output with fade-out envelope ---
+    // --- Copy to output with attack/release envelope ---
     size_t outSamples = std::min(toRetrieve, static_cast<size_t>(numSamples));
     for (size_t i = 0; i < static_cast<size_t>(numSamples); ++i)
     {
         float sample = (i < outSamples) ? stretcherOutput_[i] : 0.0f;
         output[i] = sample * fadeGain_;
 
-        if (fadingOut_)
+        // Attack phase: ramp gain up from 0 → 1
+        if (attacking_)
         {
-            fadeGain_ -= fadeIncrement_;
+            fadeGain_ += attackIncrement_;
+            if (fadeGain_ >= 1.0f)
+            {
+                fadeGain_ = 1.0f;
+                attacking_ = false;
+            }
+        }
+        // Release phase: ramp gain down from current → 0
+        else if (fadingOut_)
+        {
+            fadeGain_ -= releaseDecrement_;
             if (fadeGain_ <= 0.0f)
             {
-                // Fade complete — mark voice as inactive
+                // Release complete — mark voice as inactive
                 fadeGain_ = 0.0f;
                 active_ = false;
                 fadingOut_ = false;

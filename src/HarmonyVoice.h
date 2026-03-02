@@ -14,14 +14,16 @@
 //
 // Lifecycle (state machine):
 //
-//   INACTIVE ──activate()──► ACTIVE ──deactivate()──► FADING ──(fade done)──► INACTIVE
-//       │                      │                        │
-//       │                      │ updateInputPitch()     │ (10 ms linear fade)
-//       │                      ▼                        │
-//       │                   smoothly tracks             ▼
-//       │                   target pitch ratio       zeroes output
-//       │                                            and resets state
-//       └──────────────────────────────────────────────────────────────────────┘
+//   INACTIVE ──activate()──► ATTACKING ──(attack done)──► SUSTAINING
+//       ▲                       │                             │
+//       │                       │ deactivate()                │ deactivate()
+//       │                       ▼                             ▼
+//       └────(fade done)────── RELEASING ◄────────────────────┘
+//
+// During ATTACKING, fadeGain_ ramps linearly from 0 → 1 over the attack time.
+// During SUSTAINING, fadeGain_ stays at 1.0.
+// During RELEASING, fadeGain_ ramps linearly from its current value → 0 over
+// the release time.  The voice becomes INACTIVE once fadeGain_ reaches 0.
 //
 // When activated before pitch detection has locked on, the voice enters a
 // "waiting for pitch" state: it feeds audio to the stretcher to keep it
@@ -39,10 +41,11 @@ public:
 
     // Activate this voice for a given MIDI note.  If inputPitchHz <= 0 the
     // voice enters "waiting for pitch" mode until a valid pitch arrives.
+    // The voice ramps in over the current attack time.
     void activate(int midiNote, float inputPitchHz);
 
-    // Begin a 10 ms linear fade-out.  The voice becomes INACTIVE once the
-    // fade completes (inside the next process() call).
+    // Begin a linear fade-out over the current release time.  The voice
+    // becomes INACTIVE once the fade completes (inside the next process() call).
     void deactivate();
 
     // Update the detected input pitch and recalculate the pitch ratio.
@@ -56,6 +59,14 @@ public:
     // Set the formant scale factor.  1.0 = no shift.  Values > 1 shift
     // formants up (brighter / smaller vocal tract), < 1 shift them down.
     void setFormantScale(float scale) { formantScale_ = scale; }
+
+    // Set the attack time in milliseconds.  0 = instant on.
+    // The per-sample increment is recomputed from the stored sample rate.
+    void setAttackMs(float ms);
+
+    // Set the release time in milliseconds.  Minimum ~10 ms for click-free.
+    // The per-sample decrement is recomputed from the stored sample rate.
+    void setReleaseMs(float ms);
 
     // Pitch-shift one block of audio.
     // pitchSmoothBlockCoeff is precomputed once per block by VoicePool so
@@ -87,7 +98,8 @@ private:
 
     // --- Voice state ---
     bool active_       = false;
-    bool fadingOut_    = false;
+    bool fadingOut_    = false;    // True during RELEASING phase
+    bool attacking_    = false;    // True during ATTACKING phase
     int  assignedNote_ = -1;
 
     // --- Pitch tracking ---
@@ -98,9 +110,10 @@ private:
     float targetPitchRatio_  = 1.0f;  // Ideal ratio = (target / input) * detune
     float pitchSmoothCoeff_  = 0.0f;  // Per-sample exponential smoothing coeff
 
-    // --- Fade-out ---
-    float fadeGain_      = 0.0f;  // Current gain (1.0 → 0.0 during fade-out)
-    float fadeIncrement_ = 0.0f;  // Per-sample linear decrement
+    // --- Amplitude envelope (attack / release) ---
+    float fadeGain_        = 0.0f;  // Current envelope gain (0.0 → 1.0 → 0.0)
+    float attackIncrement_ = 0.0f;  // Per-sample gain ramp-up   (0 = instant)
+    float releaseDecrement_ = 0.0f; // Per-sample gain ramp-down
 
     // --- Per-voice modifiers (set each block by VoicePool) ---
     float detuneRatio_  = 1.0f;  // Pitch detune multiplier (1.0 = none)

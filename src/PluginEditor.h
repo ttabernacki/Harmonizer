@@ -51,7 +51,7 @@ private:
 // Layout (top to bottom):
 //   1. Title
 //   2. Knob row 1: Dry/Wet, Stereo Width, Output Gain
-//   3. Knob row 2: Detune, Pitch Correction, Formant Shift, MIDI Channel
+//   3. Knob row 2: Detune, Pitch Corr, Formant, Attack, Release, MIDI Ch
 //   4. Info panel:  Detected pitch | Active voices | MIDI LED
 //   5. Mini keyboard
 //
@@ -86,16 +86,19 @@ private:
     // --- Knobs ---
     juce::Slider dryWetSlider_, stereoWidthSlider_, outputGainSlider_;
     juce::Slider detuneSlider_, pitchCorrectSlider_, formantShiftSlider_;
+    juce::Slider attackSlider_, releaseSlider_;
     juce::Slider midiChannelSlider_;
 
     std::unique_ptr<juce::AudioProcessorValueTreeState::SliderAttachment>
         dryWetAttachment_, stereoWidthAttachment_, outputGainAttachment_,
         detuneAttachment_, pitchCorrectAttachment_, formantShiftAttachment_,
+        attackAttachment_, releaseAttachment_,
         midiChannelAttachment_;
 
     // --- Knob labels ---
     juce::Label dryWetLabel_, stereoWidthLabel_, outputGainLabel_;
     juce::Label detuneLabel_, pitchCorrectLabel_, formantShiftLabel_;
+    juce::Label attackLabel_, releaseLabel_;
     juce::Label midiChannelLabel_;
 
     // --- Info / status display ---

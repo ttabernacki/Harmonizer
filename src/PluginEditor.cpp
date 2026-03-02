@@ -126,12 +126,16 @@ HarmonizerEditor::HarmonizerEditor(HarmonizerProcessor& p)
     setupKnob(outputGainSlider_,  outputGainLabel_,  "OUTPUT GAIN",  "outputGain",  outputGainAttachment_);
     outputGainSlider_.setTextValueSuffix(" dB");
 
-    // Knobs — row 2: voice shaping + MIDI
+    // Knobs — row 2: voice shaping, envelope, MIDI
     setupKnob(detuneSlider_,       detuneLabel_,       "DETUNE",     "detune",       detuneAttachment_);
     detuneSlider_.setTextValueSuffix(" ct");
     setupKnob(pitchCorrectSlider_, pitchCorrectLabel_, "PITCH CORR", "pitchCorrect", pitchCorrectAttachment_);
     setupKnob(formantShiftSlider_, formantShiftLabel_, "FORMANT",    "formantShift", formantShiftAttachment_);
     formantShiftSlider_.setTextValueSuffix(" st");
+    setupKnob(attackSlider_,       attackLabel_,       "ATTACK",     "attack",       attackAttachment_);
+    attackSlider_.setTextValueSuffix(" ms");
+    setupKnob(releaseSlider_,      releaseLabel_,      "RELEASE",    "release",      releaseAttachment_);
+    releaseSlider_.setTextValueSuffix(" ms");
     setupKnob(midiChannelSlider_,  midiChannelLabel_,  "MIDI CH",    "midiChannel",  midiChannelAttachment_);
 
     // Info panel labels
@@ -258,26 +262,36 @@ void HarmonizerEditor::resized()
 
     area.removeFromTop(5);
 
-    // Row 2: 4 knobs (Detune, Pitch Correction, Formant, MIDI Channel)
+    // Row 2: 6 knobs (Detune, Pitch Corr, Formant, Attack, Release, MIDI Ch)
     auto row2 = area.removeFromTop(100);
-    int knobW2 = row2.getWidth() / 4;
+    int knobW2 = row2.getWidth() / 6;
     {
-        auto knobArea = row2.removeFromLeft(knobW2).reduced(5, 0);
+        auto knobArea = row2.removeFromLeft(knobW2).reduced(3, 0);
         detuneSlider_.setBounds(knobArea.removeFromTop(80));
         detuneLabel_.setBounds(knobArea);
     }
     {
-        auto knobArea = row2.removeFromLeft(knobW2).reduced(5, 0);
+        auto knobArea = row2.removeFromLeft(knobW2).reduced(3, 0);
         pitchCorrectSlider_.setBounds(knobArea.removeFromTop(80));
         pitchCorrectLabel_.setBounds(knobArea);
     }
     {
-        auto knobArea = row2.removeFromLeft(knobW2).reduced(5, 0);
+        auto knobArea = row2.removeFromLeft(knobW2).reduced(3, 0);
         formantShiftSlider_.setBounds(knobArea.removeFromTop(80));
         formantShiftLabel_.setBounds(knobArea);
     }
     {
-        auto knobArea = row2.reduced(5, 0);
+        auto knobArea = row2.removeFromLeft(knobW2).reduced(3, 0);
+        attackSlider_.setBounds(knobArea.removeFromTop(80));
+        attackLabel_.setBounds(knobArea);
+    }
+    {
+        auto knobArea = row2.removeFromLeft(knobW2).reduced(3, 0);
+        releaseSlider_.setBounds(knobArea.removeFromTop(80));
+        releaseLabel_.setBounds(knobArea);
+    }
+    {
+        auto knobArea = row2.reduced(3, 0);
         midiChannelSlider_.setBounds(knobArea.removeFromTop(80));
         midiChannelLabel_.setBounds(knobArea);
     }

@@ -39,6 +39,22 @@ void VoicePool::setFormantShiftSemitones(float semitones)
 }
 
 // ============================================================================
+// Envelope timing (forwarded to every voice)
+// ============================================================================
+
+void VoicePool::setAttackMs(float ms)
+{
+    for (auto& voice : voices_)
+        voice.setAttackMs(ms);
+}
+
+void VoicePool::setReleaseMs(float ms)
+{
+    for (auto& voice : voices_)
+        voice.setReleaseMs(ms);
+}
+
+// ============================================================================
 // Voice allocation — 4-step process called once per audio block
 // ============================================================================
 
@@ -61,7 +77,7 @@ void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float de
                 }
             }
             if (!stillHeld)
-                voice.deactivate();  // begins a 10 ms fade-out
+                voice.deactivate();  // begins release fade-out
         }
     }
 

@@ -35,6 +35,12 @@ public:
     // once, then applies uniformly to all voices.
     void setFormantShiftSemitones(float semitones);
 
+    // Set attack time in ms (0 = instant).  Forwarded to every voice.
+    void setAttackMs(float ms);
+
+    // Set release time in ms (≥10 recommended for click-free).  Forwarded to every voice.
+    void setReleaseMs(float ms);
+
     // Synchronise voice allocation with the current set of held MIDI notes
     // and the latest detected input pitch.
     void updateNotes(const int* activeNotes, int numActiveNotes, float detectedPitchHz);

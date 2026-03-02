@@ -44,6 +44,8 @@ HarmonizerProcessor::HarmonizerProcessor()
     paramPitchCorrect_ = apvts_.getRawParameterValue("pitchCorrect");
     paramFormantShift_ = apvts_.getRawParameterValue("formantShift");
     paramMidiChannel_  = apvts_.getRawParameterValue("midiChannel");
+    paramAttack_       = apvts_.getRawParameterValue("attack");
+    paramRelease_      = apvts_.getRawParameterValue("release");
 }
 
 HarmonizerProcessor::~HarmonizerProcessor() = default;
@@ -88,6 +90,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout HarmonizerProcessor::createP
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID("formantShift", 1), "Formant Shift",
         juce::NormalisableRange<float>(-12.0f, 12.0f, 0.1f), 0.0f));
+
+    // Voice attack time in ms: 0 = instant on, up to 500 ms for slow swells
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("attack", 1), "Attack",
+        juce::NormalisableRange<float>(0.0f, 500.0f, 1.0f), 0.0f));
+
+    // Voice release time in ms: how long voices take to fade after note-off.
+    // Minimum 10 ms keeps it click-free; up to 2000 ms for long tails.
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID("release", 1), "Release",
+        juce::NormalisableRange<float>(10.0f, 2000.0f, 1.0f), 10.0f));
 
     // MIDI channel filter: 0 = omni (respond to all channels), 1-16 = specific
     params.push_back(std::make_unique<juce::AudioParameterInt>(
@@ -232,6 +245,8 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     float stereoWidth             = paramStereoWidth_->load();
     int   midiChannel             = static_cast<int>(paramMidiChannel_->load());
     float outputGainDb            = paramOutputGain_->load();
+    float attackMs                = paramAttack_->load();
+    float releaseMs               = paramRelease_->load();
 
     // ------------------------------------------------------------------
     // Step 1: Process incoming MIDI (note on/off, channel filtering)
@@ -312,6 +327,8 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     // ------------------------------------------------------------------
     voicePool_.setDetuneCents(detuneCents);
     voicePool_.setFormantShiftSemitones(formantShiftSemitones);
+    voicePool_.setAttackMs(attackMs);
+    voicePool_.setReleaseMs(releaseMs);
 
     int numActiveNotes = 0;
     const int* activeNotes = midiTracker_.getActiveNotes(numActiveNotes);
