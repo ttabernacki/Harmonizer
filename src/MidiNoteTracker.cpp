@@ -8,7 +8,8 @@ void MidiNoteTracker::processMidiBuffer(const juce::MidiBuffer& midiMessages)
     {
         auto msg = metadata.getMessage();
 
-        // Channel filter: 0 = omni (accept all), 1-16 = specific channel
+        // Channel filter: skip messages not on the selected channel.
+        // channelFilter_ == 0 means "omni" (accept all).
         if (channelFilter_ > 0 && msg.getChannel() != channelFilter_)
             continue;
 
@@ -18,6 +19,7 @@ void MidiNoteTracker::processMidiBuffer(const juce::MidiBuffer& midiMessages)
         }
         else if (msg.isNoteOff() || (msg.isNoteOn() && msg.getVelocity() == 0))
         {
+            // MIDI spec: noteOn with velocity 0 is equivalent to noteOff
             removeNote(msg.getNoteNumber());
         }
         else if (msg.isAllNotesOff() || msg.isAllSoundOff())
@@ -29,7 +31,8 @@ void MidiNoteTracker::processMidiBuffer(const juce::MidiBuffer& midiMessages)
 
 void MidiNoteTracker::addNote(int note)
 {
-    // Don't add duplicates
+    // Prevent duplicates — a note-on for an already-held note is ignored.
+    // This avoids double-allocating voices for the same pitch.
     for (int i = 0; i < numActive_; ++i)
     {
         if (activeNotes_[static_cast<size_t>(i)] == note)
@@ -48,14 +51,15 @@ void MidiNoteTracker::removeNote(int note)
     {
         if (activeNotes_[static_cast<size_t>(i)] == note)
         {
-            // Shift remaining notes down to fill gap (preserves insertion order)
+            // Shift remaining notes down to fill the gap.  This preserves
+            // the press-order so VoicePool's voice assignment stays stable.
             for (int j = i; j < numActive_ - 1; ++j)
                 activeNotes_[static_cast<size_t>(j)] = activeNotes_[static_cast<size_t>(j + 1)];
             --numActive_;
             return;
         }
     }
-    // Note not found — ignore (handles noteOff without preceding noteOn)
+    // Note wasn't in the list — harmless (handles orphaned note-offs)
 }
 
 void MidiNoteTracker::reset()

@@ -13,8 +13,14 @@ int HarmonyVoice::getStartDelay() const
     return 0;
 }
 
+// ============================================================================
+// MIDI note → frequency table
+// ============================================================================
+
 const std::array<float, 128>& HarmonyVoice::getMidiFreqTable()
 {
+    // Built once on first call (thread-safe static initialisation).
+    // Formula: freq = 440 * 2^((note - 69) / 12)
     static const auto table = []()
     {
         std::array<float, 128> t{};
@@ -29,23 +35,40 @@ float HarmonyVoice::midiNoteToFrequency(int noteNumber)
 {
     if (noteNumber >= 0 && noteNumber < 128)
         return getMidiFreqTable()[static_cast<size_t>(noteNumber)];
+    // Fallback for out-of-range (should never happen with valid MIDI)
     return 440.0f * std::pow(2.0f, (static_cast<float>(noteNumber) - 69.0f) / 12.0f);
 }
+
+// ============================================================================
+// Prepare — allocate RubberBand stretcher and work buffers
+// ============================================================================
 
 void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
 {
     sampleRate_ = sampleRate;
     maxBlockSize_ = maxBlockSize;
 
-    // Calculate per-sample smoothing coefficient for exponential decay over kPitchSmoothTimeMs
+    // Exponential smoothing: coefficient = 1 - e^(-1/N) where N is the number
+    // of samples in the smoothing window.  This gives ~63% convergence in
+    // kPitchSmoothTimeMs and >99% in ~5× that time.
     float smoothSamples = static_cast<float>(sampleRate) * kPitchSmoothTimeMs / 1000.0f;
     pitchSmoothCoeff_ = 1.0f - std::exp(-1.0f / smoothSamples);
 
-    // Fade-out increment: full fade over kFadeOutTimeMs
+    // Linear fade-out: reach zero gain in exactly kFadeOutTimeMs
     float fadeSamples = static_cast<float>(sampleRate) * kFadeOutTimeMs / 1000.0f;
     fadeIncrement_ = 1.0f / fadeSamples;
 
-    // Create RubberBand stretcher: real-time, R3 (Finer) engine, pitch consistency, formant preservation
+    // --- RubberBand stretcher configuration ---
+    //
+    // OptionProcessRealTime      — Low-latency mode (as opposed to offline).
+    // OptionEngineFiner           — R3 engine: higher quality pitch shifting
+    //                               than the legacy R2 engine.
+    // OptionPitchHighConsistency  — Keeps pitch stable across the full
+    //                               frequency range (important for vocals).
+    // OptionFormantPreserved      — Separates formants from pitch so shifting
+    //                               doesn't produce "chipmunk" artifacts.
+    // OptionWindowShort           — Shorter analysis window for faster
+    //                               transient response (slight quality trade-off).
     using RBS = RubberBand::RubberBandStretcher;
     int options = RBS::OptionProcessRealTime
                 | RBS::OptionEngineFiner
@@ -55,20 +78,25 @@ void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
 
     stretcher_ = std::make_unique<RBS>(
         static_cast<size_t>(sampleRate),
-        1,  // mono
+        1,     // mono (each voice is a single channel)
         options,
-        1.0,  // time ratio (no stretching)
-        1.0   // initial pitch scale
+        1.0,   // time ratio — 1.0 = no time-stretching, pitch shift only
+        1.0    // initial pitch scale
     );
 
     stretcher_->setMaxProcessSize(static_cast<size_t>(maxBlockSize));
 
+    // Output buffer is 2× block size to handle RubberBand returning more
+    // samples than we fed in (can happen during ratio transitions)
     stretcherOutput_.resize(static_cast<size_t>(maxBlockSize * 2), 0.0f);
 
-    // Pre-allocate start padding buffer (avoid heap alloc in activate)
+    // RubberBand may need a "start pad" of silence to fill its internal
+    // buffers before it starts producing output.  Pre-allocate so that
+    // activate() never hits the heap.
     size_t pad = stretcher_->getPreferredStartPad();
     startPadBuffer_.assign(pad, 0.0f);
 
+    // Reset state
     active_ = false;
     fadingOut_ = false;
     assignedNote_ = -1;
@@ -77,6 +105,10 @@ void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
     fadeGain_ = 0.0f;
     prepared_ = true;
 }
+
+// ============================================================================
+// Activate / deactivate
+// ============================================================================
 
 void HarmonyVoice::activate(int midiNote, float inputPitchHz)
 {
@@ -90,7 +122,9 @@ void HarmonyVoice::activate(int midiNote, float inputPitchHz)
 
     updatePitchRatio();
 
-    // If no pitch detected yet, mute until we get a valid pitch to avoid unshifted leakage
+    // If pitch detection hasn't locked on yet, mute output until a valid
+    // pitch arrives.  We still feed audio to the stretcher so its internal
+    // state is ready when the pitch does come in (see process()).
     if (inputPitchHz <= 0.0f)
     {
         currentPitchRatio_ = 1.0f;
@@ -98,19 +132,20 @@ void HarmonyVoice::activate(int midiNote, float inputPitchHz)
     }
     else
     {
+        // Jump directly to the target ratio (no smoothing on activation)
         currentPitchRatio_ = targetPitchRatio_;
         waitingForPitch_ = false;
     }
 
     stretcher_->setPitchScale(static_cast<double>(currentPitchRatio_));
 
-    // Reset the stretcher for a clean start
+    // Reset stretcher for a clean start (flushes internal buffers)
     stretcher_->reset();
 
-    // Provide start padding using pre-allocated buffer (no heap allocation)
+    // Feed the required start padding (silence) so RubberBand's internal
+    // buffers are primed and it begins producing output immediately.
     if (!startPadBuffer_.empty())
     {
-        // Ensure pad buffer is zeroed
         std::memset(startPadBuffer_.data(), 0, startPadBuffer_.size() * sizeof(float));
         const float* padPtr = startPadBuffer_.data();
         stretcher_->process(&padPtr, startPadBuffer_.size(), false);
@@ -121,9 +156,15 @@ void HarmonyVoice::activate(int midiNote, float inputPitchHz)
 
 void HarmonyVoice::deactivate()
 {
+    // Don't immediately kill the voice — set fadingOut_ so that process()
+    // ramps the gain to zero over kFadeOutTimeMs, preventing clicks.
     if (active_)
         fadingOut_ = true;
 }
+
+// ============================================================================
+// Pitch tracking
+// ============================================================================
 
 void HarmonyVoice::updateInputPitch(float inputPitchHz)
 {
@@ -133,6 +174,7 @@ void HarmonyVoice::updateInputPitch(float inputPitchHz)
         updatePitchRatio();
 
         // If we were waiting for a valid pitch, snap to it immediately
+        // so the voice doesn't ramp up from an arbitrary ratio.
         if (waitingForPitch_)
         {
             currentPitchRatio_ = targetPitchRatio_;
@@ -145,13 +187,20 @@ void HarmonyVoice::updatePitchRatio()
 {
     if (inputPitchHz_ > 0.0f && targetPitchHz_ > 0.0f)
     {
-        // detuneRatio_ is precomputed by VoicePool (no std::pow here)
+        // ratio = (desired Hz / detected Hz) * detune multiplier
+        // detuneRatio_ is precomputed by VoicePool from cents, avoiding
+        // a per-voice std::pow call here.
         targetPitchRatio_ = (targetPitchHz_ / inputPitchHz_) * detuneRatio_;
 
-        // Clamp to reasonable range (Rubber Band handles ~0.25x to ~4x well)
+        // Clamp to RubberBand's comfortable range.  Beyond ~4× the R3 engine
+        // produces increasing artifacts; below ~0.25× it becomes unstable.
         targetPitchRatio_ = std::clamp(targetPitchRatio_, 0.25f, 4.0f);
     }
 }
+
+// ============================================================================
+// Process — pitch-shift one block of audio
+// ============================================================================
 
 void HarmonyVoice::process(const float* input, float* output, int numSamples, float pitchSmoothBlockCoeff)
 {
@@ -162,14 +211,13 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples, fl
         return;
     }
 
-    // If waiting for pitch detection, output silence (don't feed unshifted audio)
+    // --- Waiting for pitch: output silence but keep stretcher fed ---
     if (waitingForPitch_)
     {
         std::memset(output, 0, static_cast<size_t>(numSamples) * sizeof(float));
-        // Still feed input to keep stretcher primed
         const float* inputPtr = input;
         stretcher_->process(&inputPtr, static_cast<size_t>(numSamples), false);
-        // Discard output
+        // Drain any output to prevent the stretcher's internal buffer from growing
         int avail = stretcher_->available();
         if (avail > 0)
         {
@@ -180,16 +228,19 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples, fl
         return;
     }
 
-    // Smooth the pitch ratio toward target (blockCoeff precomputed by VoicePool)
+    // --- Smooth the pitch ratio toward its target ---
+    // pitchSmoothBlockCoeff = 1 - (1 - perSampleCoeff)^numSamples
+    // This is the "how far do we move in one block" version of per-sample
+    // exponential smoothing, computed once by VoicePool for all voices.
     currentPitchRatio_ += pitchSmoothBlockCoeff * (targetPitchRatio_ - currentPitchRatio_);
     stretcher_->setPitchScale(static_cast<double>(currentPitchRatio_));
     stretcher_->setFormantScale(static_cast<double>(formantScale_));
 
-    // Feed input to RubberBand
+    // --- Feed input to RubberBand ---
     const float* inputPtr = input;
     stretcher_->process(&inputPtr, static_cast<size_t>(numSamples), false);
 
-    // Retrieve available output
+    // --- Retrieve pitch-shifted output ---
     int avail = stretcher_->available();
     if (avail <= 0)
     {
@@ -198,31 +249,27 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples, fl
     }
 
     size_t toRetrieve = std::min(static_cast<size_t>(avail), static_cast<size_t>(numSamples));
-
-    // stretcherOutput_ is pre-allocated in prepare() to maxBlockSize*2 — no resize needed
     float* outPtr = stretcherOutput_.data();
     stretcher_->retrieve(&outPtr, toRetrieve);
 
-    // Copy retrieved samples to output, applying fade
+    // --- Copy to output with fade-out envelope ---
     size_t outSamples = std::min(toRetrieve, static_cast<size_t>(numSamples));
     for (size_t i = 0; i < static_cast<size_t>(numSamples); ++i)
     {
         float sample = (i < outSamples) ? stretcherOutput_[i] : 0.0f;
-
-        // Apply fade gain
         output[i] = sample * fadeGain_;
 
-        // Update fade for deactivation
         if (fadingOut_)
         {
             fadeGain_ -= fadeIncrement_;
             if (fadeGain_ <= 0.0f)
             {
+                // Fade complete — mark voice as inactive
                 fadeGain_ = 0.0f;
                 active_ = false;
                 fadingOut_ = false;
                 assignedNote_ = -1;
-                // Zero remaining output
+                // Zero any remaining samples in this block
                 if (i + 1 < static_cast<size_t>(numSamples))
                 {
                     std::memset(output + i + 1, 0,
