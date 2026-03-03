@@ -48,7 +48,9 @@ public:
     bool acceptsMidi() const override { return true; }
     bool producesMidi() const override { return false; }
     bool isMidiEffect() const override { return false; }
-    double getTailLengthSeconds() const override { return 0.0; }
+    // Maximum release time is 2000 ms; report this so hosts don't truncate
+    // the release tail when stopping playback or bouncing offline.
+    double getTailLengthSeconds() const override { return 2.0; }
 
     // VST3 bypass support (required by the VST3 spec; hosts like Ableton expect this)
     juce::AudioProcessorParameter* getBypassParameter() const override { return bypassParam_; }

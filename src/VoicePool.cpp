@@ -118,13 +118,15 @@ void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float de
     }
 
     // ------------------------------------------------------------------
-    // Step 3: Feed the latest detected pitch to all active voices
+    // Step 3: Feed the latest detected pitch to active (non-fading) voices
     // ------------------------------------------------------------------
     // This triggers updatePitchRatio() inside each voice, which uses the
     // detune ratio we just set in step 2.
+    // Fading voices are skipped: updating their pitch during the release
+    // fade would cause audible pitch wobble in the tail.
     for (auto& voice : voices_)
     {
-        if (voice.isActive())
+        if (voice.isActive() && !voice.isFadingOut())
             voice.updateInputPitch(detectedPitchHz);
     }
 
@@ -149,28 +151,37 @@ void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float de
         if (!found)
         {
             // Priority 1: use an inactive (empty) voice slot
-            bool allocated = false;
+            HarmonyVoice* newVoice = nullptr;
             for (auto& voice : voices_)
             {
                 if (!voice.isActive())
                 {
-                    voice.activate(note, detectedPitchHz);
-                    allocated = true;
+                    newVoice = &voice;
                     break;
                 }
             }
 
             // Priority 2: steal a fading voice (its fade-out is interrupted)
-            if (!allocated)
+            if (newVoice == nullptr)
             {
                 for (auto& voice : voices_)
                 {
                     if (voice.isFadingOut())
                     {
-                        voice.activate(note, detectedPitchHz);
+                        newVoice = &voice;
                         break;
                     }
                 }
+            }
+
+            if (newVoice != nullptr)
+            {
+                // Apply formant shift BEFORE activation so the voice starts
+                // with the correct settings from its very first block.
+                // (Detune will be distributed on the next updateNotes call,
+                // once this voice is counted among the active voices.)
+                newVoice->setFormantScale(formantScale_);
+                newVoice->activate(note, detectedPitchHz);
             }
         }
     }

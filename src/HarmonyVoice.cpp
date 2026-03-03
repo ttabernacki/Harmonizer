@@ -74,12 +74,6 @@ void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
     sampleRate_ = sampleRate;
     maxBlockSize_ = maxBlockSize;
 
-    // Exponential smoothing: coefficient = 1 - e^(-1/N) where N is the number
-    // of samples in the smoothing window.  This gives ~63% convergence in
-    // kPitchSmoothTimeMs and >99% in ~5× that time.
-    float smoothSamples = static_cast<float>(sampleRate) * kPitchSmoothTimeMs / 1000.0f;
-    pitchSmoothCoeff_ = 1.0f - std::exp(-1.0f / smoothSamples);
-
     // Default envelope: instant attack, kFadeOutTimeMs release
     attackIncrement_ = 0.0f;
     float fadeSamples = static_cast<float>(sampleRate) * kFadeOutTimeMs / 1000.0f;

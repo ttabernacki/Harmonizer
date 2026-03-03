@@ -13,13 +13,19 @@ void PitchDetector::prepare(double sampleRate, int /*maxBlockSize*/)
 {
     sampleRate_ = sampleRate;
 
-    // Analysis window: 1536 samples ≈ 35 ms at 44.1 kHz.
-    // YIN needs at least 2 × (sampleRate / minFrequency) samples to detect
-    // the lowest pitch.  At 44.1 kHz / 60 Hz that's 1470; 1536 rounds up
-    // to a nice multiple of 256 and gives a small safety margin.
-    bufferSize_ = 1536;
-    halfBufferSize_ = bufferSize_ / 2;  // W = 768: reference window length
-    hopSize_ = bufferSize_ / 2;          // 50% overlap → ~57 detections/sec
+    // Analysis window must be large enough that W = bufferSize/2 covers at
+    // least one full period of the lowest detectable frequency:
+    //   W >= sampleRate / minFrequency  →  bufferSize >= 2 * sampleRate / minFrequency
+    //
+    // At 44.1 kHz / 60 Hz → need ≥ 1470; use 1536.
+    // At 48 kHz   / 60 Hz → need ≥ 1600; use 1600.
+    // At 96 kHz   / 60 Hz → need ≥ 3200; use 3200.
+    int minForFreqRange = static_cast<int>(2.0 * sampleRate / static_cast<double>(minFrequency_)) + 2;
+    // Round up to even so W = bufferSize/2 is an integer
+    if (minForFreqRange % 2 != 0) minForFreqRange++;
+    bufferSize_ = std::max(1536, minForFreqRange);
+    halfBufferSize_ = bufferSize_ / 2;  // W: reference window length
+    hopSize_ = bufferSize_ / 2;          // 50% overlap
 
     internalBuffer_.resize(static_cast<size_t>(bufferSize_), 0.0f);
     internalBufferWritePos_ = 0;
@@ -230,10 +236,16 @@ float PitchDetector::yinDetect(const float* buffer, int numSamples)
         float s0 = yinBuffer_[static_cast<size_t>(bestTau - 1)];
         float s1 = yinBuffer_[static_cast<size_t>(bestTau)];
         float s2 = yinBuffer_[static_cast<size_t>(bestTau + 1)];
-        float denom = 2.0f * s1 - s2 - s0;
+        // Parabola through (-1,s0), (0,s1), (1,s2) — vertex at x = (s0-s2)/(2*(s0-2s1+s2))
+        float denom = s0 - 2.0f * s1 + s2;
         // Guard against near-zero denominator (flat region = no useful parabola)
-        if (std::abs(denom) > 1e-12f)
-            betterTau = static_cast<float>(bestTau) + (s0 - s2) / (2.0f * denom);
+        // and clamp the shift to ±1 sample (parabolic interpolation can't move further)
+        if (std::abs(denom) > 1e-6f)
+        {
+            float shift = (s0 - s2) / (2.0f * denom);
+            shift = std::clamp(shift, -1.0f, 1.0f);
+            betterTau = static_cast<float>(bestTau) + shift;
+        }
     }
 
     float frequency = static_cast<float>(sampleRate_) / betterTau;

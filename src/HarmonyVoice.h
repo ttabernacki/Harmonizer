@@ -108,7 +108,6 @@ private:
 
     float currentPitchRatio_ = 1.0f;  // Smoothed ratio fed to RubberBand
     float targetPitchRatio_  = 1.0f;  // Ideal ratio = (target / input) * detune
-    float pitchSmoothCoeff_  = 0.0f;  // Per-sample exponential smoothing coeff
 
     // --- Amplitude envelope (attack / release) ---
     float fadeGain_        = 0.0f;  // Current envelope gain (0.0 → 1.0 → 0.0)
