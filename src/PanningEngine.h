@@ -54,4 +54,8 @@ private:
     std::array<VoiceInfo, kMaxVoices> sortBuffer_{};  // No heap allocation for sort
     float panSmoothCoeff_ = 0.0f;
     float widthScale_     = 1.0f;
+
+    // Cached per-block smoothing coefficient — recomputed only when block size changes
+    int   cachedBlockSize_    = 0;
+    float cachedPanBlockCoeff_ = 0.0f;
 };

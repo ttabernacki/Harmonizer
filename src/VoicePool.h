@@ -75,4 +75,8 @@ private:
     // from kPitchSmoothTimeMs in prepare() and used in renderVoices() to
     // compute the per-block coefficient.
     float pitchSmoothCoeff_ = 0.0f;
+
+    // Cached per-block coefficient — recomputed only when block size changes
+    int   cachedBlockSize_       = 0;
+    float cachedPitchBlockCoeff_ = 0.0f;
 };

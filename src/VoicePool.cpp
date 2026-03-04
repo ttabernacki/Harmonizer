@@ -34,7 +34,7 @@ void VoicePool::setFormantShiftSemitones(float semitones)
     if (std::abs(semitones - lastFormantSemitones_) > 0.001f)
     {
         lastFormantSemitones_ = semitones;
-        formantScale_ = std::pow(2.0f, semitones / 12.0f);
+        formantScale_ = std::exp2f(semitones / 12.0f);
     }
 }
 
@@ -108,7 +108,7 @@ void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float de
                 {
                     float t = static_cast<float>(activeIdx) / static_cast<float>(activeTotal - 1);
                     float offsetCents = detuneCents_ * (2.0f * t - 1.0f);
-                    detuneRatio = std::pow(2.0f, offsetCents / 1200.0f);
+                    detuneRatio = std::exp2f(offsetCents / 1200.0f);
                 }
                 voice.setDetuneRatio(detuneRatio);
                 voice.setFormantScale(formantScale_);
@@ -193,11 +193,14 @@ void VoicePool::updateNotes(const int* activeNotes, int numActiveNotes, float de
 
 void VoicePool::renderVoices(const float* input, float* voiceOutputs[], int numSamples)
 {
-    // Convert the per-sample smoothing coefficient into a per-block coefficient:
-    //   blockCoeff = 1 - (1 - perSampleCoeff)^numSamples
-    // This gives the same result as applying the per-sample filter N times,
-    // but we only do it once here and pass it to every voice.
-    float blockCoeff = 1.0f - std::pow(1.0f - pitchSmoothCoeff_, static_cast<float>(numSamples));
+    // Convert the per-sample smoothing coefficient into a per-block coefficient.
+    // Cache it since block size rarely changes between calls.
+    if (numSamples != cachedBlockSize_)
+    {
+        cachedBlockSize_ = numSamples;
+        cachedPitchBlockCoeff_ = 1.0f - std::pow(1.0f - pitchSmoothCoeff_, static_cast<float>(numSamples));
+    }
+    float blockCoeff = cachedPitchBlockCoeff_;
 
     for (int v = 0; v < kMaxVoices; ++v)
     {

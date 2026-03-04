@@ -71,7 +71,13 @@ void PanningEngine::applyPanning(const float* const* voiceBuffers,
                                   const std::array<HarmonyVoice, kMaxVoices>& voices,
                                   float* leftOut, float* rightOut, int numSamples)
 {
-    static constexpr float halfPi = 3.14159265358979323846f * 0.5f;
+    // Cache the per-block smoothing coefficient (recompute only when block size changes)
+    if (numSamples != cachedBlockSize_)
+    {
+        cachedBlockSize_ = numSamples;
+        cachedPanBlockCoeff_ = 1.0f - std::pow(1.0f - panSmoothCoeff_, static_cast<float>(numSamples));
+    }
+    float blockCoeff = cachedPanBlockCoeff_;
 
     for (int v = 0; v < kMaxVoices; ++v)
     {
@@ -81,15 +87,11 @@ void PanningEngine::applyPanning(const float* const* voiceBuffers,
         auto& ps = panStates_[static_cast<size_t>(v)];
         const float* buf = voiceBuffers[v];
 
-        // Smooth pan position once per block (avoids per-sample trig)
-        float blockCoeff = 1.0f - std::pow(1.0f - panSmoothCoeff_, static_cast<float>(numSamples));
+        // Smooth pan position once per block
         ps.currentPan += blockCoeff * (ps.targetPan - ps.currentPan);
 
-        // Constant-power panning:
-        //   angle maps pan ∈ [-1, +1] to [0, π/2]
-        //   gainL = cos(angle)  → 1.0 at full left,  ~0.707 at centre
-        //   gainR = sin(angle)  → 0.0 at full left,  ~0.707 at centre
-        // The sum gainL² + gainR² = 1.0 (constant power).
+        // Constant-power panning (sin/cos called once per voice per block)
+        static constexpr float halfPi = 3.14159265358979323846f * 0.5f;
         float angle = (ps.currentPan + 1.0f) * 0.5f * halfPi;
         float gainL = std::cos(angle);
         float gainR = std::sin(angle);

@@ -81,19 +81,16 @@ void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
 
     // --- RubberBand stretcher configuration ---
     //
-    // OptionProcessRealTime      — Low-latency mode (as opposed to offline).
-    // OptionEngineFiner           — R3 engine: higher quality pitch shifting
-    //                               than the legacy R2 engine.
-    // OptionPitchHighConsistency  — Keeps pitch stable across the full
-    //                               frequency range (important for vocals).
-    // OptionFormantPreserved      — Separates formants from pitch so shifting
-    //                               doesn't produce "chipmunk" artifacts.
-    // OptionWindowShort           — Shorter analysis window for faster
-    //                               transient response (slight quality trade-off).
+    // OptionProcessRealTime  — Low-latency mode (as opposed to offline).
+    // OptionEngineFaster     — R2 engine: significantly lower CPU than R3
+    //                          (Finer), allowing more simultaneous voices.
+    // OptionFormantPreserved — Separates formants from pitch so shifting
+    //                          doesn't produce "chipmunk" artifacts.
+    // OptionWindowShort      — Shorter analysis window for faster transient
+    //                          response (slight quality trade-off).
     using RBS = RubberBand::RubberBandStretcher;
     int options = RBS::OptionProcessRealTime
-                | RBS::OptionEngineFiner
-                | RBS::OptionPitchHighConsistency
+                | RBS::OptionEngineFaster
                 | RBS::OptionFormantPreserved
                 | RBS::OptionWindowShort;
 
@@ -289,39 +286,58 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples, fl
     stretcher_->retrieve(&outPtr, toRetrieve);
 
     // --- Copy to output with attack/release envelope ---
+    //
+    // Split into phase-specific loops to avoid per-sample branching.
+    // At most one phase transition can happen per block.
     size_t outSamples = std::min(toRetrieve, static_cast<size_t>(numSamples));
-    for (size_t i = 0; i < static_cast<size_t>(numSamples); ++i)
-    {
-        float sample = (i < outSamples) ? stretcherOutput_[i] : 0.0f;
-        output[i] = sample * fadeGain_;
+    size_t i = 0;
+    size_t n = static_cast<size_t>(numSamples);
 
-        // Attack phase: ramp gain up from 0 → 1
-        if (attacking_)
+    // Attack phase: ramp gain from current → 1.0
+    if (attacking_)
+    {
+        for (; i < n; ++i)
         {
+            float sample = (i < outSamples) ? stretcherOutput_[i] : 0.0f;
+            output[i] = sample * fadeGain_;
             fadeGain_ += attackIncrement_;
             if (fadeGain_ >= 1.0f)
             {
                 fadeGain_ = 1.0f;
                 attacking_ = false;
+                ++i;
+                break;
             }
         }
-        // Release phase: ramp gain down from current → 0
-        else if (fadingOut_)
+    }
+
+    // Sustain phase: constant gain, no branching per sample
+    if (!attacking_ && !fadingOut_)
+    {
+        float gain = fadeGain_;
+        for (; i < n; ++i)
         {
+            float sample = (i < outSamples) ? stretcherOutput_[i] : 0.0f;
+            output[i] = sample * gain;
+        }
+    }
+
+    // Release phase: ramp gain from current → 0.0
+    if (fadingOut_)
+    {
+        for (; i < n; ++i)
+        {
+            float sample = (i < outSamples) ? stretcherOutput_[i] : 0.0f;
+            output[i] = sample * fadeGain_;
             fadeGain_ -= releaseDecrement_;
             if (fadeGain_ <= 0.0f)
             {
-                // Release complete — mark voice as inactive
                 fadeGain_ = 0.0f;
                 active_ = false;
                 fadingOut_ = false;
                 assignedNote_ = -1;
-                // Zero any remaining samples in this block
-                if (i + 1 < static_cast<size_t>(numSamples))
-                {
-                    std::memset(output + i + 1, 0,
-                                (static_cast<size_t>(numSamples) - i - 1) * sizeof(float));
-                }
+                if (i + 1 < n)
+                    std::memset(output + i + 1, 0, (n - i - 1) * sizeof(float));
                 break;
             }
         }
