@@ -359,12 +359,11 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
     smoothedDryWet_.setTargetValue(paramDryWet_->load());
     smoothedOutputGain_.setTargetValue(std::pow(10.0f, outputGainDb / 20.0f));
 
-    // Gain compensation: as more voices stack up, reduce per-voice gain to
-    // keep perceived loudness roughly constant.  1/sqrt(N) approximates
-    // equal-power summing for uncorrelated signals.
-    float targetVoiceGain = 1.0f;
-    if (activeCount > 1)
-        targetVoiceGain = 1.0f / std::sqrt(static_cast<float>(activeCount));
+    // Gain compensation: divide by voice count so the summed output never
+    // exceeds ±1.0.  Harmony voices are derived from the same input signal
+    // (correlated), so they sum closer to N×amplitude — not sqrt(N)×amplitude
+    // as uncorrelated signals would.  1/N is the only safe choice here.
+    float targetVoiceGain = (activeCount > 0) ? 1.0f / static_cast<float>(activeCount) : 1.0f;
     smoothedVoiceGain_.setTargetValue(targetVoiceGain);
 
     // ------------------------------------------------------------------
@@ -391,9 +390,9 @@ void HarmonizerProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::M
         float wetL = wetLeftBuffer_[static_cast<size_t>(i)];
         float wetR = wetRightBuffer_[static_cast<size_t>(i)];
 
-        leftOut[i] = (dry * dryGain + wetL * wetGain) * outGain;
+        leftOut[i] = juce::jlimit(-1.0f, 1.0f, (dry * dryGain + wetL * wetGain) * outGain);
         if (rightOut != nullptr)
-            rightOut[i] = (dry * dryGain + wetR * wetGain) * outGain;
+            rightOut[i] = juce::jlimit(-1.0f, 1.0f, (dry * dryGain + wetR * wetGain) * outGain);
     }
 
     // ------------------------------------------------------------------
