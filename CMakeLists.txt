@@ -56,7 +56,7 @@ target_compile_definitions(Harmonizer PUBLIC
     JUCE_VST3_CAN_REPLACE_VST2=0
     JUCE_WEB_BROWSER=0
     JUCE_USE_CURL=0
-    $<$<PLATFORM_ID:Windows>:JUCE_ASIO=1>
+    JUCE_ASIO=1
 )
 
 # ============================================================================
