@@ -15,6 +15,7 @@ target_include_directories(rubberband PUBLIC libs/rubberband)
 set_target_properties(rubberband PROPERTIES POSITION_INDEPENDENT_CODE ON)
 target_compile_definitions(rubberband PRIVATE
     KISSFFT_DATATYPE=float
+    NOMINMAX
 )
 
 # Plugin target
