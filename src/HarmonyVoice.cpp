@@ -107,6 +107,19 @@ void HarmonyVoice::buildStretcher()
     startPadBuffer_.assign(pad, 0.0f);
 }
 
+void HarmonyVoice::drainExcess()
+{
+    // Pull all remaining samples out of the stretcher's internal output buffer
+    // to prevent it from growing.  We reuse stretcherOutput_ as scratch space
+    // since we've already consumed the data we need from it.
+    for (int excess = stretcher_->available(); excess > 0; excess = stretcher_->available())
+    {
+        size_t chunk = std::min(static_cast<size_t>(excess), stretcherOutput_.size());
+        float* drainPtr = stretcherOutput_.data();
+        stretcher_->retrieve(&drainPtr, chunk);
+    }
+}
+
 void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
 {
     sampleRate_ = sampleRate;
@@ -156,6 +169,7 @@ void HarmonyVoice::enableFormantPreservation(bool enable)
             const float* padPtr = startPadBuffer_.data();
             stretcher_->process(&padPtr, startPadBuffer_.size(), false);
         }
+        drainExcess();
     }
 }
 
@@ -224,6 +238,10 @@ void HarmonyVoice::activate(int midiNote, float inputPitchHz)
         const float* padPtr = startPadBuffer_.data();
         stretcher_->process(&padPtr, startPadBuffer_.size(), false);
     }
+
+    // Drain any output produced by the start-pad feed so it doesn't
+    // accumulate in the stretcher's internal buffer.
+    drainExcess();
 
     active_ = true;
 }
@@ -296,14 +314,7 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples, fl
         std::memset(output, 0, static_cast<size_t>(numSamples) * sizeof(float));
         const float* inputPtr = input;
         stretcher_->process(&inputPtr, static_cast<size_t>(numSamples), false);
-        // Drain any output to prevent the stretcher's internal buffer from growing
-        int avail = stretcher_->available();
-        if (avail > 0)
-        {
-            size_t toDrain = std::min(static_cast<size_t>(avail), stretcherOutput_.size());
-            float* drainPtr = stretcherOutput_.data();
-            stretcher_->retrieve(&drainPtr, toDrain);
-        }
+        drainExcess();
         return;
     }
 
@@ -325,6 +336,7 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples, fl
         return;
     }
 
+    // Retrieve what we need for output (up to numSamples).
     size_t toRetrieve = std::min(static_cast<size_t>(avail), static_cast<size_t>(numSamples));
     float* outPtr = stretcherOutput_.data();
     stretcher_->retrieve(&outPtr, toRetrieve);
@@ -386,4 +398,12 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples, fl
             }
         }
     }
+
+    // --- Drain any excess output from the stretcher ---
+    // RubberBand's windowed processing can produce slightly more output
+    // samples than input per block.  If we only retrieve numSamples worth,
+    // the remainder accumulates in the stretcher's internal buffer.  Over
+    // many blocks this causes the buffer to grow, eventually triggering
+    // heap allocation on the audio thread which manifests as dropouts.
+    drainExcess();
 }

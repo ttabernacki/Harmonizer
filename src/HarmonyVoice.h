@@ -102,6 +102,10 @@ private:
     // (Re)create the RubberBand stretcher with current options.
     void buildStretcher();
 
+    // Drain all pending output from the stretcher's internal buffer.
+    // Prevents unbounded buffer growth that triggers heap allocation.
+    void drainExcess();
+
     // Lazily-initialised MIDI → Hz lookup table (128 entries, computed once)
     static const std::array<float, 128>& getMidiFreqTable();
 
