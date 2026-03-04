@@ -60,6 +60,17 @@ public:
     // formants up (brighter / smaller vocal tract), < 1 shift them down.
     void setFormantScale(float scale) { formantScale_ = scale; }
 
+    // Enable or disable formant preservation.  When disabled, the stretcher
+    // skips spectral-envelope estimation, roughly halving per-voice CPU cost.
+    // Rebuilds the stretcher internally when the state changes, so call this
+    // only when the setting actually changes (VoicePool handles this).
+    void enableFormantPreservation(bool enable);
+
+    // Immediately deactivate this voice without any fade-out.  Used by the
+    // voice pool to cull excess fading voices when the processing budget is
+    // exceeded.
+    void forceKill();
+
     // Set the attack time in milliseconds.  0 = instant on.
     // The per-sample increment is recomputed from the stored sample rate.
     void setAttackMs(float ms);
@@ -87,6 +98,9 @@ public:
 private:
     // Recompute targetPitchRatio_ from current input/target Hz and detune.
     void updatePitchRatio();
+
+    // (Re)create the RubberBand stretcher with current options.
+    void buildStretcher();
 
     // Lazily-initialised MIDI → Hz lookup table (128 entries, computed once)
     static const std::array<float, 128>& getMidiFreqTable();
@@ -117,6 +131,11 @@ private:
     // --- Per-voice modifiers (set each block by VoicePool) ---
     float detuneRatio_  = 1.0f;  // Pitch detune multiplier (1.0 = none)
     float formantScale_ = 1.0f;  // Formant shift ratio   (1.0 = none)
+
+    // Whether OptionFormantPreserved is currently active on the stretcher.
+    // Toggled lazily to avoid paying for spectral-envelope estimation when
+    // the formant shift parameter is at its default (0 semitones).
+    bool formantPreserved_ = false;
 
     // --- Buffers ---
     std::vector<float> stretcherOutput_;  // Holds RubberBand's output samples

@@ -36,6 +36,17 @@ void VoicePool::setFormantShiftSemitones(float semitones)
         lastFormantSemitones_ = semitones;
         formantScale_ = std::exp2f(semitones / 12.0f);
     }
+
+    // Toggle formant preservation on the stretchers only when the formant
+    // shift moves away from zero or back to zero.  5 cents (~0.05 st) is
+    // well below audibility and avoids toggling on tiny automation noise.
+    bool needFormant = std::abs(semitones) > 0.05f;
+    if (needFormant != formantEnabled_)
+    {
+        formantEnabled_ = needFormant;
+        for (auto& voice : voices_)
+            voice.enableFormantPreservation(needFormant);
+    }
 }
 
 // ============================================================================
@@ -201,6 +212,26 @@ void VoicePool::renderVoices(const float* input, float* voiceOutputs[], int numS
         cachedPitchBlockCoeff_ = 1.0f - std::pow(1.0f - pitchSmoothCoeff_, static_cast<float>(numSamples));
     }
     float blockCoeff = cachedPitchBlockCoeff_;
+
+    // --- Enforce voice processing budget ---
+    // Count total active voices (sustaining + fading).  If over budget,
+    // force-kill the oldest fading voices so we don't overload the CPU.
+    int totalActive = 0;
+    for (const auto& voice : voices_)
+        if (voice.isActive()) ++totalActive;
+
+    if (totalActive > kMaxProcessingVoices)
+    {
+        for (auto& voice : voices_)
+        {
+            if (totalActive <= kMaxProcessingVoices) break;
+            if (voice.isFadingOut())
+            {
+                voice.forceKill();
+                --totalActive;
+            }
+        }
+    }
 
     for (int v = 0; v < kMaxVoices; ++v)
     {

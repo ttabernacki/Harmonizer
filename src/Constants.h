@@ -17,6 +17,12 @@
 // memory scales linearly with this value.
 inline constexpr int kMaxVoices = 12;
 
+// Maximum number of voices that may run their pitch-shifter concurrently.
+// When the total active count (sustaining + fading) exceeds this, the oldest
+// fading voices are force-killed to stay within CPU budget.  This prevents
+// long release tails from stacking up and causing buffer overruns.
+inline constexpr int kMaxProcessingVoices = 8;
+
 // Exponential smoothing time for pitch-ratio changes.  40 ms is fast enough
 // to track vibrato (~6 Hz) without audible lag, yet slow enough to suppress
 // jitter from frame-to-frame pitch-detection noise.

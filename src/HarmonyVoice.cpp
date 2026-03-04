@@ -69,6 +69,44 @@ void HarmonyVoice::setReleaseMs(float ms)
 // Prepare — allocate RubberBand stretcher and work buffers
 // ============================================================================
 
+void HarmonyVoice::buildStretcher()
+{
+    // --- RubberBand stretcher configuration ---
+    //
+    // OptionProcessRealTime  — Low-latency mode (as opposed to offline).
+    // OptionEngineFaster     — R2 engine: significantly lower CPU than R3
+    //                          (Finer), allowing more simultaneous voices.
+    // OptionFormantPreserved — Only added when the user is actually using
+    //                          formant shift.  Skipping this roughly halves
+    //                          per-voice CPU by avoiding spectral-envelope
+    //                          estimation.
+    // OptionWindowShort      — Shorter analysis window for faster transient
+    //                          response (slight quality trade-off).
+    using RBS = RubberBand::RubberBandStretcher;
+    int options = RBS::OptionProcessRealTime
+                | RBS::OptionEngineFaster
+                | RBS::OptionWindowShort;
+
+    if (formantPreserved_)
+        options |= RBS::OptionFormantPreserved;
+
+    stretcher_ = std::make_unique<RBS>(
+        static_cast<size_t>(sampleRate_),
+        1,     // mono (each voice is a single channel)
+        options,
+        1.0,   // time ratio — 1.0 = no time-stretching, pitch shift only
+        1.0    // initial pitch scale
+    );
+
+    stretcher_->setMaxProcessSize(static_cast<size_t>(maxBlockSize_));
+
+    // RubberBand may need a "start pad" of silence to fill its internal
+    // buffers before it starts producing output.  Pre-allocate so that
+    // activate() never hits the heap.
+    size_t pad = stretcher_->getPreferredStartPad();
+    startPadBuffer_.assign(pad, 0.0f);
+}
+
 void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
 {
     sampleRate_ = sampleRate;
@@ -79,40 +117,14 @@ void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
     float fadeSamples = static_cast<float>(sampleRate) * kFadeOutTimeMs / 1000.0f;
     releaseDecrement_ = 1.0f / fadeSamples;
 
-    // --- RubberBand stretcher configuration ---
-    //
-    // OptionProcessRealTime  — Low-latency mode (as opposed to offline).
-    // OptionEngineFaster     — R2 engine: significantly lower CPU than R3
-    //                          (Finer), allowing more simultaneous voices.
-    // OptionFormantPreserved — Separates formants from pitch so shifting
-    //                          doesn't produce "chipmunk" artifacts.
-    // OptionWindowShort      — Shorter analysis window for faster transient
-    //                          response (slight quality trade-off).
-    using RBS = RubberBand::RubberBandStretcher;
-    int options = RBS::OptionProcessRealTime
-                | RBS::OptionEngineFaster
-                | RBS::OptionFormantPreserved
-                | RBS::OptionWindowShort;
-
-    stretcher_ = std::make_unique<RBS>(
-        static_cast<size_t>(sampleRate),
-        1,     // mono (each voice is a single channel)
-        options,
-        1.0,   // time ratio — 1.0 = no time-stretching, pitch shift only
-        1.0    // initial pitch scale
-    );
-
-    stretcher_->setMaxProcessSize(static_cast<size_t>(maxBlockSize));
+    // Default: no formant preservation for lower CPU cost.
+    // VoicePool will enable it when the formant shift parameter is non-zero.
+    formantPreserved_ = false;
+    buildStretcher();
 
     // Output buffer is 2× block size to handle RubberBand returning more
     // samples than we fed in (can happen during ratio transitions)
     stretcherOutput_.resize(static_cast<size_t>(maxBlockSize * 2), 0.0f);
-
-    // RubberBand may need a "start pad" of silence to fill its internal
-    // buffers before it starts producing output.  Pre-allocate so that
-    // activate() never hits the heap.
-    size_t pad = stretcher_->getPreferredStartPad();
-    startPadBuffer_.assign(pad, 0.0f);
 
     // Reset state
     active_ = false;
@@ -123,6 +135,37 @@ void HarmonyVoice::prepare(double sampleRate, int maxBlockSize)
     targetPitchRatio_ = 1.0f;
     fadeGain_ = 0.0f;
     prepared_ = true;
+}
+
+void HarmonyVoice::enableFormantPreservation(bool enable)
+{
+    if (enable == formantPreserved_ || !prepared_)
+        return;
+
+    formantPreserved_ = enable;
+    buildStretcher();
+
+    // If the voice is active, restore its pitch ratio so processing resumes
+    // at the correct pitch after the stretcher rebuild.
+    if (active_ && !waitingForPitch_)
+    {
+        stretcher_->setPitchScale(static_cast<double>(currentPitchRatio_));
+        if (!startPadBuffer_.empty())
+        {
+            std::memset(startPadBuffer_.data(), 0, startPadBuffer_.size() * sizeof(float));
+            const float* padPtr = startPadBuffer_.data();
+            stretcher_->process(&padPtr, startPadBuffer_.size(), false);
+        }
+    }
+}
+
+void HarmonyVoice::forceKill()
+{
+    active_ = false;
+    fadingOut_ = false;
+    attacking_ = false;
+    assignedNote_ = -1;
+    fadeGain_ = 0.0f;
 }
 
 // ============================================================================
@@ -267,7 +310,8 @@ void HarmonyVoice::process(const float* input, float* output, int numSamples, fl
     // --- Smooth the pitch ratio toward its target ---
     currentPitchRatio_ += pitchSmoothBlockCoeff * (targetPitchRatio_ - currentPitchRatio_);
     stretcher_->setPitchScale(static_cast<double>(currentPitchRatio_));
-    stretcher_->setFormantScale(static_cast<double>(formantScale_));
+    if (formantPreserved_)
+        stretcher_->setFormantScale(static_cast<double>(formantScale_));
 
     // --- Feed input to RubberBand ---
     const float* inputPtr = input;

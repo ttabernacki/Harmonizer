@@ -71,6 +71,11 @@ private:
     float formantScale_         = 1.0f;
     float lastFormantSemitones_ = 0.0f;
 
+    // Tracks whether formant preservation is active on the stretchers.
+    // Toggled lazily: only rebuilt when the formant shift moves away from /
+    // back to zero, not on every parameter change.
+    bool formantEnabled_ = false;
+
     // Pitch-smoothing per-sample coefficient, shared by every voice.  Derived
     // from kPitchSmoothTimeMs in prepare() and used in renderVoices() to
     // compute the per-block coefficient.
